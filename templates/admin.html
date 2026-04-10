@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Panel — forecast.wbn</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+<style>
+:root{
+    --green-900:#1B4332;--green-700:#2D6A4F;--green-500:#40916C;
+    --green-200:#B7E4C7;--green-100:#D8F3DC;--green-50:#F0FFF4;
+    --surface:#F7F8FA;--white:#FFFFFF;--border:#E2E8F0;
+    --text-1:#1A202C;--text-2:#4A5568;--text-3:#718096;
+    --danger:#E53E3E;--warning:#D97706;--info:#2B6CB0;
+    --radius:8px;--shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+    --shadow-md:0 4px 6px rgba(0,0,0,.07),0 2px 4px rgba(0,0,0,.04);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--surface);color:var(--text-1);min-height:100vh}
+
+/* Nav */
+.nav{background:var(--green-900);height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:100}
+.nav-brand{display:flex;align-items:center;gap:12px}
+.nav-brand img{height:28px}
+.nav-title{color:#fff;font-size:14px;font-weight:600;letter-spacing:.2px}
+.nav-sub{color:var(--green-200);font-size:11px;margin-top:1px}
+.nav-right{display:flex;align-items:center;gap:10px}
+.nav-link{color:var(--green-200);font-size:13px;text-decoration:none;padding:6px 12px;border-radius:var(--radius);transition:background .15s}
+.nav-link:hover{background:rgba(255,255,255,.1);color:#fff}
+.nav-btn{background:rgba(255,255,255,.12);color:#fff;border:none;padding:6px 14px;border-radius:var(--radius);font-size:13px;cursor:pointer;transition:background .15s}
+.nav-btn:hover{background:rgba(255,255,255,.2)}
+
+/* Layout */
+.page{max-width:1320px;margin:0 auto;padding:28px 24px 48px}
+.page-header{margin-bottom:24px}
+.page-header h1{font-size:20px;font-weight:700}
+.page-header p{font-size:13px;color:var(--text-3);margin-top:3px}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px}
+.stat-card{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
+.stat-label{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px}
+.stat-value{font-size:32px;font-weight:700;color:var(--text-1);margin-top:6px;line-height:1}
+.stat-card.accent{border-left:3px solid var(--green-500)}
+.stat-card.warn{border-left:3px solid var(--warning)}
+.stat-card.info{border-left:3px solid var(--info)}
+.stat-card.danger{border-left:3px solid var(--danger)}
+
+/* Section */
+.section{background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:24px;overflow:hidden}
+.section-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.section-title{font-size:14px;font-weight:600;color:var(--text-1)}
+.section-count{font-size:12px;color:var(--text-3);background:var(--surface);padding:3px 8px;border-radius:20px}
+
+/* Quarter cards */
+.q-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;padding:20px}
+.q-card{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.q-card-head{padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.q-card-head.initiated{background:var(--green-900);color:#fff}
+.q-card-head.not-init{background:var(--surface);color:var(--text-2)}
+.q-card-title{font-size:13px;font-weight:700}
+.q-card-meta{font-size:11px;opacity:.75}
+.q-card-body{padding:14px 16px}
+
+/* Channel grid inside quarter card */
+.ch-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.ch-cell{border:1px solid var(--border);border-radius:5px;padding:7px 5px;text-align:center;font-size:10px}
+.ch-cell.done{background:var(--green-50);border-color:var(--green-200)}
+.ch-cell.pending{background:#fafafa}
+.ch-cell-name{font-weight:700;color:var(--text-2)}
+.ch-cell.done .ch-cell-name{color:var(--green-700)}
+.ch-cell-status{color:var(--text-3);margin-top:2px}
+.ch-cell.done .ch-cell-status{color:var(--green-500)}
+
+/* Initiate form */
+.init-form{display:flex;flex-direction:column;gap:8px}
+.init-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.q-select{padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;background:#fff;outline:none;color:var(--text-1)}
+.q-select:focus{border-color:var(--green-500)}
+.file-label{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;cursor:pointer;background:#fff;color:var(--text-2);transition:all .15s}
+.file-label:hover{background:var(--surface)}
+.file-name{font-size:11px;color:var(--text-3);font-style:italic}
+
+/* Table */
+.data-table{width:100%;border-collapse:collapse;font-size:13px}
+.data-table th{background:var(--surface);padding:10px 16px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--text-3);border-bottom:1px solid var(--border);white-space:nowrap}
+.data-table td{padding:12px 16px;border-bottom:1px solid var(--border);vertical-align:middle}
+.data-table tr:last-child td{border-bottom:none}
+.data-table tbody tr:hover{background:var(--green-50)}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+.badge-green{background:#DCFCE7;color:#166534}
+.badge-yellow{background:#FEF9C3;color:#854D0E}
+.badge-red{background:#FEE2E2;color:#991B1B}
+.badge-gray{background:#F1F5F9;color:#475569}
+.badge-blue{background:#DBEAFE;color:#1E40AF}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.dot-green{background:#22C55E}.dot-yellow{background:#EAB308}.dot-gray{background:#94A3B8}
+
+/* Action buttons */
+.action-row{display:flex;gap:6px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid transparent;transition:all .15s;text-decoration:none;white-space:nowrap}
+.btn-primary{background:var(--green-700);color:#fff;border-color:var(--green-700)}
+.btn-primary:hover{background:var(--green-900)}
+.btn-outline{background:transparent;color:var(--text-2);border-color:var(--border)}
+.btn-outline:hover{background:var(--surface)}
+.btn-danger{background:transparent;color:var(--danger);border-color:#FCA5A5}
+.btn-danger:hover{background:#FEF2F2}
+.btn-warn{background:transparent;color:var(--warning);border-color:#FCD34D}
+.btn-warn:hover{background:#FFFBEB}
+.btn-blue{background:#2B6CB0;color:#fff}
+.btn-blue:hover{background:#1A4A8A}
+.btn-sm{padding:4px 9px;font-size:11px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Log */
+.log-list{list-style:none}
+.log-item{display:flex;gap:16px;padding:10px 20px;border-bottom:1px solid var(--border);font-size:12px}
+.log-item:last-child{border-bottom:none}
+.log-time{color:var(--text-3);white-space:nowrap;min-width:120px}
+.log-action{font-weight:600;min-width:130px}
+.log-action.sub{color:var(--green-700)}.log-action.refill{color:var(--warning)}.log-action.approve{color:var(--info)}
+.reason-text{font-size:11px;color:var(--text-3);font-style:italic;margin-top:3px}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:var(--radius);font-size:13px;font-weight:500;color:#fff;box-shadow:var(--shadow-md);z-index:9999;animation:slideUp .2s ease;max-width:340px}
+.toast-success{background:var(--green-700)}.toast-error{background:var(--danger)}
+@keyframes slideUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Overlay */
+.overlay-spin{display:none;position:fixed;inset:0;background:rgba(255,255,255,.6);z-index:200;justify-content:center;align-items:center}
+.overlay-spin.open{display:flex}
+.spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--green-500);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="overlay-spin" id="overlayEl"><div class="spinner"></div></div>
+
+<!-- Nav -->
+<nav class="nav">
+    <div class="nav-brand">
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="WBN" onerror="this.style.display='none'">
+        <div>
+            <div class="nav-title">Wellbeing Nutrition</div>
+            <div class="nav-sub">Forecast Admin Panel</div>
+        </div>
+    </div>
+    <div class="nav-right">
+        <a href="{{ url_for('forecast') }}" class="nav-link">Forecast</a>
+        <span style="color:rgba(255,255,255,.3)">|</span>
+        <span style="color:var(--green-200);font-size:13px">{{ user_name }}</span>
+        <a href="{{ url_for('logout') }}" class="nav-btn">Logout</a>
+    </div>
+</nav>
+
+<div class="page">
+
+    <!-- Header -->
+    <div class="page-header">
+        <h1>Forecast Admin Panel</h1>
+        <p>{{ today }} &nbsp;·&nbsp; Admin: {{ user_name }}</p>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats">
+        <div class="stat-card info">
+            <div class="stat-label">Quarters Initiated</div>
+            <div class="stat-value">{{ q_info.values()|selectattr('initiated')|list|length }}</div>
+        </div>
+        <div class="stat-card accent">
+            <div class="stat-label">Channels Submitted</div>
+            <div class="stat-value">{{ total_submitted }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Channels</div>
+            <div class="stat-value">{{ channels|length }}</div>
+        </div>
+        <div class="stat-card warn">
+            <div class="stat-label">Pending Refills</div>
+            <div class="stat-value">{{ pending_refills }}</div>
+        </div>
+    </div>
+
+    <!-- Initiate Quarter -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">🚀 Initiate / Update Quarter</span>
+            <span class="section-count">Upload the Calculated DRR Excel to unlock a quarter</span>
+        </div>
+        <div style="padding:20px">
+            <form id="initiateForm" enctype="multipart/form-data">
+                <div class="init-row">
+                    <select name="quarter" class="q-select" id="qInitSel">
+                        {% for qkey, qmeta in quarters.items() %}
+                        <option value="{{ qkey }}">{{ qkey }}: {{ qmeta.label }}</option>
+                        {% endfor %}
+                    </select>
+                    <label class="file-label">
+                        📂 Choose DRR Excel
+                        <input type="file" name="file" id="drrFileInp" accept=".xlsx,.xls" style="display:none" onchange="onDRRFileChange(this)">
+                    </label>
+                    <span class="file-name" id="drrFileName">No file selected</span>
+                    <button type="button" class="btn btn-primary" onclick="initiateQuarter()">Initiate Quarter</button>
+                </div>
+                <div style="font-size:11px;color:var(--text-3);margin-top:8px">
+                    The DRR Excel must have a 2-row header: Row 1 = Channel names, Row 2 = column labels (matching "7 Days Overall DRR", "15 Days Overall DRR" etc.) plus base columns (Category, Sub-Category, Product Type, Product Name, SKU, Live/Not Live, Sub Product Type).
+                </div>
+            </form>
+            <div id="initiateResult" style="margin-top:12px;font-size:13px"></div>
+        </div>
+    </div>
+
+    <!-- Quarter Overview -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">📅 Quarter Overview</span>
+            <span class="section-count">All channels · all quarters</span>
+        </div>
+        <div class="q-grid">
+            {% for qkey, qi in q_info.items() %}
+            <div class="q-card">
+                <div class="q-card-head {{ 'initiated' if qi.initiated else 'not-init' }}">
+                    <div>
+                        <div class="q-card-title">{{ qkey }}: {{ qi.label }}</div>
+                        {% if qi.initiated %}
+                        <div class="q-card-meta">{{ qi.sku_count }} SKUs · Initiated {{ qi.initiated_at }}</div>
+                        {% else %}
+                        <div class="q-card-meta">Not yet initiated</div>
+                        {% endif %}
+                    </div>
+                    {% if qi.initiated %}
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">
+                        <a href="/admin/api/export-quarter/{{ qkey }}" class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.3)">⬇ Export</a>
+                        <button class="btn btn-sm btn-danger" style="background:rgba(255,0,0,.12);color:#fca5a5;border-color:rgba(255,0,0,.2)" onclick="revokeQuarter('{{ qkey }}')">Revoke</button>
+                    </div>
+                    {% endif %}
+                </div>
+                {% if qi.initiated %}
+                <div class="q-card-body">
+                    <div class="ch-grid">
+                        {% for ch in channels %}
+                        {% set cs = qi.channels.get(ch, {}) %}
+                        <div class="ch-cell {{ 'done' if cs.submitted else 'pending' }}">
+                            <div class="ch-cell-name">{{ ch }}</div>
+                            <div class="ch-cell-status">{{ '✓' if cs.submitted else '–' }}</div>
+                            {% if cs.submitted %}
+                            <div style="font-size:9px;color:var(--green-500);margin-top:2px">{{ cs.submitted_at }}</div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Channel Submissions Table -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">📋 Channel Submission Management</span>
+            <span class="section-count">Per-quarter, per-channel actions</span>
+        </div>
+        <div style="overflow-x:auto">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Quarter</th>
+                    <th>Channel</th>
+                    <th>Status</th>
+                    <th>User</th>
+                    <th>Submitted At</th>
+                    <th>Revision</th>
+                    <th>Refill Request</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="submissionsBody">
+            {% set ns = namespace(any=false) %}
+            {% for qkey, qi in q_info.items() if qi.initiated %}
+                {% for ch in channels %}
+                {% set cs = qi.channels.get(ch, {}) %}
+                {% set ns.any = true %}
+                <tr>
+                    <td><span class="badge badge-blue">{{ qkey }}</span></td>
+                    <td style="font-weight:600;font-size:12px">{{ ch }}</td>
+                    <td>
+                        {% if cs.submitted %}
+                        <span class="badge badge-green"><span class="dot dot-green"></span>Submitted</span>
+                        {% else %}
+                        <span class="badge badge-gray"><span class="dot dot-gray"></span>Pending</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-size:12px;color:var(--text-2)">{{ cs.user_name or '—' }}</td>
+                    <td style="font-size:12px;color:var(--text-2)">{{ cs.submitted_at or '—' }}</td>
+                    <td>
+                        {% if cs.revision %}
+                        <span class="badge badge-blue">Rev {{ cs.revision }}</span>
+                        {% else %}<span style="color:var(--text-3);font-size:12px">—</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if cs.refill_requested %}
+                        <span class="badge badge-yellow"><span class="dot dot-yellow"></span>Requested</span>
+                        {% if cs.refill_reason %}
+                        <div class="reason-text">{{ cs.refill_reason[:60] }}{{ '…' if cs.refill_reason|length > 60 }}</div>
+                        {% endif %}
+                        {% else %}
+                        <span style="color:var(--text-3);font-size:12px">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="action-row">
+                            {% if cs.submitted %}
+                            <a href="/admin/api/download-submission/{{ qkey }}/{{ ch }}" class="btn btn-outline btn-sm">Download</a>
+                            {% endif %}
+                            {% if cs.refill_requested %}
+                            <button class="btn btn-primary btn-sm" onclick="approveRefill('{{ qkey }}','{{ ch }}',this)">Approve Refill</button>
+                            <button class="btn btn-danger btn-sm" onclick="denyRefill('{{ qkey }}','{{ ch }}',this)">Deny</button>
+                            {% elif cs.submitted %}
+                            <button class="btn btn-warn btn-sm" onclick="resetSubmission('{{ qkey }}','{{ ch }}',this)">Reset</button>
+                            {% else %}
+                            <button class="btn btn-outline btn-sm" onclick="forceSubmit('{{ qkey }}','{{ ch }}',this)">Force Submit</button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% endfor %}
+            {% if not ns.any %}
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-3)">No quarters initiated yet. Upload a DRR Excel above to get started.</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">📜 Activity Log</span>
+            <span class="section-count">Recent 50</span>
+        </div>
+        {% if activity_log %}
+        <ul class="log-list">
+            {% for entry in activity_log %}
+            <li class="log-item">
+                <span class="log-time">{{ entry.timestamp }}</span>
+                <span class="log-action {% if 'Submission' in entry.action %}sub{% elif 'Refill' in entry.action %}refill{% elif 'Approved' in entry.action or 'Unlock' in entry.action %}approve{% endif %}">{{ entry.action }}</span>
+                <span style="color:var(--text-2);font-weight:500;min-width:100px">{{ entry.user }}</span>
+                <span style="color:var(--text-3)">{{ entry.detail }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div style="padding:32px;text-align:center;color:var(--text-3);font-size:13px">No activity yet.</div>
+        {% endif %}
+    </div>
+
+</div>
+
+<script>
+let toastTimer;
+function toast(msg,type='success'){
+    const el=document.getElementById('toastEl')||document.createElement('div');
+    el.id='toastEl';el.className='toast toast-'+type;el.textContent=msg;
+    document.body.appendChild(el);clearTimeout(toastTimer);
+    toastTimer=setTimeout(()=>el.remove(),3500);
+}
+function setOverlay(on){ document.getElementById('overlayEl').classList.toggle('open',on); }
+async function post(url,body){
+    setOverlay(true);
+    try{
+        const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        return await r.json();
+    }finally{setOverlay(false);}
+}
+
+function onDRRFileChange(inp){
+    document.getElementById('drrFileName').textContent=inp.files[0]?inp.files[0].name:'No file selected';
+}
+
+async function initiateQuarter(){
+    const qkey=document.getElementById('qInitSel').value;
+    const fileInp=document.getElementById('drrFileInp');
+    if(!fileInp.files[0]){toast('Please select a DRR Excel file.','error');return;}
+    if(!confirm(`Initiate ${qkey} with file "${fileInp.files[0].name}"?\nExisting submissions will be preserved.`))return;
+    setOverlay(true);
+    try{
+        const fd=new FormData();
+        fd.append('quarter',qkey); fd.append('file',fileInp.files[0]);
+        const r=await fetch('/admin/api/initiate-quarter',{method:'POST',body:fd});
+        const j=await r.json();
+        if(!r.ok) throw new Error(j.error||'Failed.');
+        document.getElementById('initiateResult').innerHTML=
+            `<span style="color:var(--green-700);font-weight:600">✓ ${qkey} initiated — ${j.sku_count} SKUs loaded. Channels found: ${(j.channels_found||[]).join(', ')||'—'}.</span>`;
+        toast(`${qkey} initiated with ${j.sku_count} SKUs.`);
+        setTimeout(()=>location.reload(),1500);
+    }catch(e){
+        document.getElementById('initiateResult').innerHTML=`<span style="color:var(--danger)">${e.message}</span>`;
+        toast(e.message,'error');
+    }finally{setOverlay(false);}
+}
+
+async function revokeQuarter(qkey){
+    if(!confirm(`Revoke ${qkey}?\n\nThis will permanently delete ALL DRR data and submissions for this quarter. This cannot be undone.`))return;
+    const res=await post('/admin/api/revoke-quarter',{quarter:qkey});
+    if(res.status==='ok'){toast(`${qkey} revoked.`);setTimeout(()=>location.reload(),1200);}
+    else toast(res.error||'Failed.','error');
+}
+
+async function resetSubmission(qkey,channel,btn){
+    if(!confirm(`Reset ${channel} submission for ${qkey}? The user will be able to re-submit.`))return;
+    const res=await post('/admin/api/reset-submission',{quarter:qkey,channel});
+    if(res.status==='ok'){toast(`${channel}/${qkey} reset.`);setTimeout(()=>location.reload(),1200);}
+    else toast(res.error||'Failed.','error');
+}
+
+async function approveRefill(qkey,channel,btn){
+    if(!confirm(`Approve refill for ${channel}/${qkey}?`))return;
+    const res=await post('/admin/api/approve-refill',{quarter:qkey,channel});
+    if(res.status==='approved'){toast('Refill approved.');setTimeout(()=>location.reload(),1200);}
+    else toast(res.error||'Failed.','error');
+}
+
+async function denyRefill(qkey,channel,btn){
+    if(!confirm(`Deny refill request for ${channel}/${qkey}?`))return;
+    const res=await post('/admin/api/deny-refill',{quarter:qkey,channel});
+    if(res.status==='denied'){toast('Refill denied.');setTimeout(()=>location.reload(),1200);}
+    else toast(res.error||'Failed.','error');
+}
+
+async function forceSubmit(qkey,channel,btn){
+    if(!confirm(`Force submit ${channel} for ${qkey}? This marks it submitted without actual forecast data.`))return;
+    const res=await post('/admin/api/force-submit',{quarter:qkey,channel});
+    if(res.status==='ok'){toast(`Force submitted: ${channel}/${qkey}`);setTimeout(()=>location.reload(),1200);}
+    else toast(res.error||'Failed.','error');
+}
+</script>
+</body>
+</html>

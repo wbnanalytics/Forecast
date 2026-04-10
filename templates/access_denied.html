@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Access Denied — forecast.wbn</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+    <style>
+        :root {
+            --brand-primary: #ECF3E9;
+            --surface: #f4f6f9;
+        }
+        body { margin:0; font-family:'Segoe UI',sans-serif; background:var(--surface); }
+        .header {
+            display:flex; justify-content:space-between; align-items:center;
+            padding:12px 20px; background:var(--brand-primary);
+        }
+        .header img { height:40px; }
+        .logout-btn {
+            background:#fff; color:#1E4843; border:none; padding:10px 18px;
+            font-size:14px; font-weight:600; border-radius:8px; cursor:pointer;
+            transition:background .2s;
+        }
+        .logout-btn:hover { background:#c5e9a1; }
+        .container { display:flex; justify-content:center; align-items:center; height:calc(100vh - 64px); }
+        .card {
+            background:#fff; border-radius:12px; padding:48px; max-width:520px;
+            text-align:center; box-shadow:0 4px 16px rgba(0,0,0,.1);
+        }
+        .icon { font-size:56px; margin-bottom:16px; }
+        h1 { font-size:22px; color:#1E4843; margin-bottom:12px; }
+        p  { font-size:15px; color:#555; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo">
+        <form action="{{ url_for('logout') }}" method="get">
+            <button type="submit" class="logout-btn">Logout</button>
+        </form>
+    </div>
+    <div class="container">
+        <div class="card">
+            <div class="icon">🚫</div>
+            <h1>Access Denied</h1>
+            <p>You do not have access to the Forecast Submission Tool.<br>
+               Please contact your <strong>BU Head</strong> to request access.</p>
+        </div>
+    </div>
+</body>
+</html>

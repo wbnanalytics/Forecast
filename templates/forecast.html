@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forecast — Wellbeing Nutrition</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+<style>
+:root{
+  --g900:#1B4332;--g700:#2D6A4F;--g500:#40916C;--g200:#B7E4C7;--g100:#D8F3DC;--g50:#F0FFF4;
+  --surface:#F7F8FA;--white:#fff;--border:#E2E8F0;--border-d:#A0AEC0;
+  --t1:#1A202C;--t2:#4A5568;--t3:#718096;--danger:#E53E3E;
+  --warn-bg:#FFFBEB;--warn-bd:#FCD34D;--warn-tx:#92400E;
+  --cell-ok:#EBF8F0;--fix-bg:#E8F5EC;--fix-fg:var(--g900);
+  --drr-bg:#EEF2FF;--drr-fg:#3730A3;--drr-hd:#E0E7FF;
+  --row-e:#fff;--row-o:#F9FFF9;--lock-bg:#F8F9FA;--lock-fg:#A0AEC0;
+  --rad:6px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--surface);height:100vh;display:flex;flex-direction:column;overflow:hidden;color:var(--t1)}
+
+/* Nav */
+.nav{background:var(--g900);height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;flex-shrink:0}
+.nav-left{display:flex;align-items:center;gap:12px}
+.nav-brand img{height:26px}
+.nav-title{color:#fff;font-size:14px;font-weight:600}
+.nav-date{color:var(--g200);font-size:11px}
+.nav-right{display:flex;align-items:center;gap:7px}
+.user-pill{background:rgba(255,255,255,.12);color:#fff;font-size:12px;font-weight:500;padding:5px 11px;border-radius:20px}
+.status-pill{font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px}
+.s-draft{background:#FEF9C3;color:#92400E}.s-sub{background:#DCFCE7;color:#14532D}
+.nav-btn{background:rgba(255,255,255,.12);color:#fff;border:none;padding:6px 13px;border-radius:var(--rad);font-size:12px;cursor:pointer;transition:background .15s;text-decoration:none;display:inline-flex;align-items:center}
+.nav-btn:hover{background:rgba(255,255,255,.22)}
+.admin-link{color:var(--g200);font-size:12px;text-decoration:none;padding:5px 9px;border-radius:var(--rad);transition:background .15s}
+.admin-link:hover{background:rgba(255,255,255,.1);color:#fff}
+
+/* Quarter bar */
+.qbar{background:#fff;border-bottom:1px solid var(--border);padding:7px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+.q-btn{padding:5px 13px;border-radius:var(--rad);font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--t2);transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.q-btn:hover{border-color:var(--g500);color:var(--g700)}
+.q-btn.active{background:var(--g700);color:#fff;border-color:var(--g700)}
+.q-btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
+.ch-select-wrap{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--t3)}
+.ch-select{padding:5px 10px;border:1px solid var(--border);border-radius:var(--rad);font-size:12px;background:#fff;cursor:pointer;outline:none;color:var(--t1)}
+.ch-select:focus{border-color:var(--g500)}
+
+/* Filter bar */
+.filter-bar{background:#fff;border-bottom:1px solid var(--border);padding:7px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+.filter-bar label{font-size:11px;color:var(--t3);font-weight:500}
+.filter-select,.filter-search{padding:5px 9px;border:1px solid var(--border);border-radius:var(--rad);font-size:12px;background:#fff;outline:none;color:var(--t1);cursor:pointer}
+.filter-select:focus,.filter-search:focus{border-color:var(--g500)}
+.filter-search{width:180px}
+.filter-count{margin-left:auto;font-size:11px;color:var(--t3);background:var(--surface);padding:3px 9px;border-radius:20px;border:1px solid var(--border)}
+.btn-clear-filters{font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px;transition:color .15s}
+.btn-clear-filters:hover{color:var(--danger)}
+
+/* Toolbar */
+.toolbar{background:#fff;border-bottom:1px solid var(--border);padding:7px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:8px;flex-wrap:wrap}
+.toolbar-left,.toolbar-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:var(--rad);font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:#fff;color:var(--t2);transition:all .15s;white-space:nowrap;text-decoration:none}
+.btn:hover{background:var(--surface);color:var(--t1)}
+.btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
+.btn-primary{background:var(--g700);color:#fff;border-color:var(--g700)}
+.btn-primary:hover{background:var(--g900);border-color:var(--g900)}
+.btn-blue{background:#2B6CB0;color:#fff;border-color:#2B6CB0}.btn-blue:hover{background:#1A4A8A}
+.btn-warn{background:#D97706;color:#fff;border-color:#D97706}.btn-warn:hover{background:#B45309}
+.row-badge{font-size:11px;color:var(--t3);padding:4px 9px;background:var(--surface);border-radius:20px;border:1px solid var(--border)}
+
+/* Banners */
+.banner{display:none;padding:8px 16px;font-size:12px;font-weight:500;flex-shrink:0;align-items:center;gap:8px}
+.banner.visible{display:flex}
+.ban-lock{background:var(--warn-bg);border-bottom:1px solid var(--warn-bd);color:var(--warn-tx)}
+.ban-refill{background:#EFF6FF;border-bottom:1px solid #BFDBFE;color:#1E40AF}
+.ban-info{background:var(--g50);border-bottom:1px solid var(--g200);color:var(--g700)}
+
+/* Table */
+.table-wrap{flex:1;overflow:auto;position:relative}
+table.grid{border-collapse:collapse;font-size:12px;white-space:nowrap;min-width:100%}
+table.grid thead tr:first-child th{position:sticky;top:0;z-index:20}
+table.grid thead tr:last-child th{position:sticky;top:28px;z-index:20}
+table.grid td:nth-child(-n+3),table.grid th:nth-child(-n+3){position:sticky;z-index:15}
+table.grid td:nth-child(1),table.grid th:nth-child(1){left:0}
+table.grid td:nth-child(2),table.grid th:nth-child(2){left:130px}
+table.grid td:nth-child(3),table.grid th:nth-child(3){left:280px}
+table.grid thead th:nth-child(-n+3){z-index:30}
+.th-grp{background:var(--g700);color:#fff;font-size:10px;font-weight:700;text-align:center;padding:5px 4px;border:1px solid #3d8b68;height:28px;letter-spacing:.4px}
+.th-grp.fix{color:var(--g200)}
+.th-grp.drr{background:#4338CA}
+.th-grp.month{background:var(--g500)}
+.th-col{background:var(--g100);color:var(--g900);font-size:10px;font-weight:700;text-align:center;padding:5px 4px;border:1px solid var(--border);height:36px;vertical-align:middle}
+.th-col.fix{background:var(--fix-bg)}
+.th-col.drr{background:var(--drr-hd);color:#3730A3}
+.th-col.month{background:#DCFCE7;color:#14532D}
+tbody tr:nth-child(even){background:var(--row-e)}
+tbody tr:nth-child(odd){background:var(--row-o)}
+tbody tr:hover{background:var(--cell-ok)}
+tbody tr.hidden-row{display:none}
+td{border:1px solid var(--border);height:30px;vertical-align:middle;padding:0}
+td.fix{background:var(--fix-bg);color:var(--fix-fg);font-size:11px;padding:0 8px}
+td.fix.sku{font-weight:600}
+td.drr{background:var(--drr-bg);text-align:center;font-size:11px;padding:0 6px;color:var(--drr-fg);font-weight:500}
+td.edit{text-align:center;min-width:82px;max-width:96px}
+td.edit input{width:100%;height:30px;border:none;background:transparent;text-align:center;font-size:11px;font-family:inherit;color:var(--t1);outline:none;padding:0 3px}
+td.edit input:focus{background:var(--cell-ok);box-shadow:inset 0 0 0 1px var(--g500)}
+td.edit input.err{color:var(--danger)}
+body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:not-allowed;pointer-events:none}
+
+/* Empty state */
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--t3);padding:60px 20px}
+.empty h2{font-size:17px;font-weight:600;color:var(--t2)}
+.empty p{font-size:13px;text-align:center;line-height:1.65}
+
+/* Statusbar */
+.statusbar{display:flex;justify-content:space-between;align-items:center;padding:4px 16px;background:#fff;border-top:1px solid var(--border);font-size:11px;color:var(--t3);flex-shrink:0;height:24px}
+
+/* Toast */
+.toast{position:fixed;bottom:28px;right:20px;padding:10px 18px;border-radius:var(--rad);font-size:12px;font-weight:500;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:9999;animation:fadeUp .2s ease;max-width:360px}
+.ts{background:var(--g700)}.te{background:var(--danger)}.ti{background:#2B6CB0}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Spinner */
+.spin-ov{display:none;position:fixed;inset:0;background:rgba(255,255,255,.55);z-index:2000;justify-content:center;align-items:center;flex-direction:column;gap:10px}
+.spin-ov.open{display:flex}
+.spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--g500);border-radius:50%;animation:spin .7s linear infinite}
+.spin-lbl{font-size:13px;font-weight:500;color:var(--g900)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Modals */
+.mover{display:none;position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:1000;justify-content:center;align-items:center}
+.mover.open{display:flex}
+.modal{background:#fff;border-radius:10px;padding:28px;width:440px;max-width:95vw;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.modal h2{font-size:15px;font-weight:700;color:var(--t1);margin-bottom:8px}
+.modal p{font-size:13px;color:var(--t2);line-height:1.6;margin-bottom:16px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end}
+.modal textarea{width:100%;border:1px solid var(--border);border-radius:var(--rad);padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:72px;margin-bottom:14px;outline:none;transition:border-color .15s}
+.modal textarea:focus{border-color:var(--g500)}
+.modal .merr{color:var(--danger);font-size:11px;margin-bottom:10px}
+</style>
+</head>
+<body class="{{ 'locked' if false else '' }}" id="bodyEl">
+
+<!-- Spinner -->
+<div class="spin-ov" id="spinner"><div class="spinner"></div><div class="spin-lbl" id="spinLbl">Loading...</div></div>
+
+<!-- Confirm Submit Modal -->
+<div class="mover" id="mConfirm">
+<div class="modal">
+  <h2>Confirm Submission</h2>
+  <p>Submit forecast for <strong id="confirmCount">0</strong> visible products?<br>
+     <strong>{{ user_name }}</strong> &nbsp;&middot;&nbsp; {{ today }}<br><br>
+     Once submitted the form is locked. Use <em>Request Refill</em> to make changes.</p>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeM('mConfirm')">Cancel</button>
+    <button class="btn btn-primary" onclick="confirmSubmit()">Submit</button>
+  </div>
+</div>
+</div>
+
+<!-- Success Modal -->
+<div class="mover" id="mSuccess">
+<div class="modal">
+  <h2>Forecast Submitted</h2>
+  <p id="successTxt">Submitted successfully.</p>
+  <div class="modal-actions">
+    <button class="btn btn-blue" onclick="downloadSub()">Download Excel</button>
+    <button class="btn" onclick="closeM('mSuccess')">Close</button>
+  </div>
+</div>
+</div>
+
+<!-- Refill Modal -->
+<div class="mover" id="mRefill">
+<div class="modal">
+  <h2>Request Refill</h2>
+  <p>Describe why you need to re-submit. The admin will review and unlock the form.</p>
+  <textarea id="refillReason" placeholder="Describe the correction needed..."></textarea>
+  <div class="merr" id="refillErr"></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeM('mRefill')">Cancel</button>
+    <button class="btn btn-warn" onclick="submitRefill()">Send Request</button>
+  </div>
+</div>
+</div>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-left">
+    <div class="nav-brand">
+      <img src="{{ url_for('static', filename='logo.png') }}" alt="WBN" onerror="this.style.display='none'">
+    </div>
+    <div>
+      <div class="nav-title">Wellbeing Nutrition — Forecast</div>
+      <div class="nav-date">{{ today }}</div>
+    </div>
+  </div>
+  <div class="nav-right">
+    {% if is_admin %}<a href="{{ url_for('admin_panel') }}" class="admin-link">Admin Panel</a>{% endif %}
+    <span class="user-pill">{{ user_name }}</span>
+    <span class="status-pill s-draft" id="sPill">Draft</span>
+    <a href="{{ url_for('logout') }}" class="nav-btn">Logout</a>
+  </div>
+</nav>
+
+<!-- Quarter bar -->
+<div class="qbar">
+  {% for qkey, qmeta in quarters.items() %}
+  {% set qs = q_status.get(qkey, {}) %}
+  <button class="q-btn{% if loop.first %} active{% endif %}"
+          id="qbtn-{{ qkey }}"
+          onclick="selectQuarter('{{ qkey }}')"
+          {% if not qs.get('initiated') %}disabled title="Not yet initiated by admin"{% endif %}>
+    {{ qmeta.label }}
+    {% if qs.get('initiated') %}
+      <span style="font-size:10px;opacity:.7;">({{ qs.sku_count }} SKUs)</span>
+    {% endif %}
+  </button>
+  {% if not loop.last %}<span style="color:var(--border-d)">|</span>{% endif %}
+  {% endfor %}
+
+  {% if is_admin %}
+  <div class="ch-select-wrap">
+    <span>Channel:</span>
+    <select class="ch-select" id="chSelect" onchange="onChannelChange()">
+      {% for ch in channels %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
+    </select>
+  </div>
+  {% elif user_channel %}
+  <div class="ch-select-wrap">
+    <span style="font-weight:600;color:var(--g700)">Channel: {{ user_channel }}</span>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Filter bar -->
+<div class="filter-bar" id="filterBar" style="display:none">
+  <label>Filter:</label>
+  <select class="filter-select" id="fCat" onchange="applyFilters()">
+    <option value="">All Categories</option>
+  </select>
+  <select class="filter-select" id="fSub" onchange="applyFilters()">
+    <option value="">All Sub-Categories</option>
+  </select>
+  <select class="filter-select" id="fType" onchange="applyFilters()">
+    <option value="">All Product Types</option>
+  </select>
+  <select class="filter-select" id="fFilled" onchange="applyFilters()">
+    <option value="">All Rows</option>
+    <option value="filled">Filled only</option>
+    <option value="empty">Empty only</option>
+  </select>
+  <input type="search" class="filter-search" id="fSearch" placeholder="Search SKU / Product..." oninput="applyFilters()">
+  <button class="btn-clear-filters" onclick="clearFilters()">Clear filters</button>
+  <span class="filter-count" id="filterCount">0 / 0</span>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar" id="toolbarEl">
+  <div class="toolbar-left">
+    <button class="btn" id="btnUpload" onclick="triggerUpload()">Load Template</button>
+    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="uploadTpl(this)">
+    <a class="btn" id="btnDownTpl" href="#" onclick="downloadTpl(event)">Download Template</a>
+    <span class="row-badge" id="rowBadge">0 products</span>
+  </div>
+  <div class="toolbar-right" id="toolRight">
+    <button class="btn" id="btnDraft" onclick="saveDraft()">Save Draft</button>
+    <button class="btn btn-primary" id="btnSubmit" onclick="openConfirm()">Submit Forecast</button>
+  </div>
+</div>
+
+<!-- Banners -->
+<div class="banner ban-lock" id="banLock">
+  <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+  Forecast locked — submitted by <strong id="banUser">&nbsp;</strong>&nbsp; at <strong id="banAt">&nbsp;</strong>.
+  To make changes, click <strong>Request Refill</strong>.
+</div>
+<div class="banner ban-refill" id="banRefill">
+  <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+  Refill requested — awaiting admin approval.
+</div>
+<div class="banner ban-info" id="banInfo" style="display:flex">
+  Select a quarter above to load data.
+</div>
+
+<!-- Table or empty -->
+<div class="empty" id="emptyState">
+  <svg width="44" height="44" fill="none" stroke="var(--border-d)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+  <h2>No Data Loaded</h2>
+  <p>Select an active quarter above, then use <strong>Download Template</strong><br>
+     to get the Excel format, fill it in, then <strong>Load Template</strong> to import.</p>
+</div>
+<div class="table-wrap" id="tableWrap" style="display:none">
+  <table class="grid" id="gridTable">
+    <thead id="gridHead"></thead>
+    <tbody id="gridBody"></tbody>
+  </table>
+</div>
+
+<!-- Status bar -->
+<div class="statusbar">
+  <span id="statusMsg">Select a quarter to begin.</span>
+  <span>forecast.wbn &middot; Wellbeing Nutrition</span>
+</div>
+
+<script>
+/* ── Config from server ───────────────────────────────────────────────── */
+const IS_ADMIN   = {{ 'true' if is_admin else 'false' }};
+const USER_CH    = {{ ('"' + user_channel + '"') if user_channel else 'null' }};
+const CHANNELS   = {{ channels | tojson }};
+const QUARTERS   = {{ quarters | tojson }};
+const Q_STATUS   = {{ q_status | tojson }};
+const DRR_LABELS = {{ drr_labels | tojson }};
+const DRR_SHORT  = {{ drr_short | tojson }};
+
+/* ── State ────────────────────────────────────────────────────────────── */
+let curQ      = Object.keys(QUARTERS)[0];
+let curCh     = IS_ADMIN ? CHANNELS[0] : USER_CH;
+let allRows   = [];   // full unfiltered data
+let months    = [];
+let isLocked  = false;
+let filterOpts = {categories:[], sub_categories:[], product_types:[]};
+
+/* ── Spinner & Toast ──────────────────────────────────────────────────── */
+const spin = {
+  show(msg='Loading...'){
+    document.getElementById('spinLbl').textContent = msg;
+    document.getElementById('spinner').classList.add('open');
+  },
+  hide(){ document.getElementById('spinner').classList.remove('open'); }
+};
+let _tt;
+function toast(msg, type='s', dur=3500){
+  const el = document.getElementById('_toast') || document.createElement('div');
+  el.id='_toast'; el.className='toast t'+type; el.textContent=msg;
+  document.body.appendChild(el); clearTimeout(_tt);
+  _tt = setTimeout(()=>el.remove(), dur);
+}
+function setStatus(m){ document.getElementById('statusMsg').textContent = m; }
+function openM(id){ document.getElementById(id).classList.add('open'); }
+function closeM(id){ document.getElementById(id).classList.remove('open'); }
+
+/* ── Quarter / Channel selection ──────────────────────────────────────── */
+function selectQuarter(qkey){
+  if(!Q_STATUS[qkey] || !Q_STATUS[qkey].initiated){
+    toast('This quarter has not been initiated by admin yet.','i'); return;
+  }
+  curQ = qkey;
+  document.querySelectorAll('.q-btn').forEach(b => b.classList.toggle('active', b.id === 'qbtn-'+qkey));
+  document.getElementById('banInfo').style.display='none';
+  loadDRR();
+}
+
+function onChannelChange(){
+  curCh = document.getElementById('chSelect').value;
+  if(curQ && Q_STATUS[curQ]?.initiated) loadDRR();
+}
+
+/* ── Load DRR from server ─────────────────────────────────────────────── */
+async function loadDRR(){
+  if(!curQ || !curCh){ toast('Select a quarter and channel.','i'); return; }
+  spin.show('Loading DRR data...');
+  try{
+    const url = '/api/load-drr/'+curQ+'?channel='+encodeURIComponent(curCh);
+    const r = await fetch(url);
+    const j = await r.json();
+    if(!r.ok){ toast(j.error||'Failed to load.','e'); return; }
+    months       = j.months;
+    allRows      = j.rows;
+    filterOpts   = j.filter_options || {categories:[],sub_categories:[],product_types:[]};
+    isLocked     = j.submitted;
+    populateFilters();
+    buildTable(allRows);
+    applyUILock(j.submitted, j.submitted_at, j.refill_requested, j.refill_approved, j.revision);
+    setStatus('Loaded '+allRows.length+' products for '+curQ+' / '+curCh+(isLocked?' — locked.':' — ready to edit.'));
+  }catch(e){ toast('Load failed: '+e.message,'e'); }
+  finally{ spin.hide(); }
+}
+
+/* ── Filters ──────────────────────────────────────────────────────────── */
+function populateFilters(){
+  function fill(id, opts){
+    const el = document.getElementById(id);
+    const cur = el.value;
+    el.innerHTML = '<option value="">'+el.options[0].text+'</option>';
+    opts.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o; opt.textContent = o;
+      if(o===cur) opt.selected=true;
+      el.appendChild(opt);
+    });
+  }
+  fill('fCat',  filterOpts.categories);
+  fill('fSub',  filterOpts.sub_categories);
+  fill('fType', filterOpts.product_types);
+  document.getElementById('filterBar').style.display = 'flex';
+}
+
+function applyFilters(){
+  const cat    = document.getElementById('fCat').value.toLowerCase();
+  const sub    = document.getElementById('fSub').value.toLowerCase();
+  const ptype  = document.getElementById('fType').value.toLowerCase();
+  const filled = document.getElementById('fFilled').value;
+  const search = document.getElementById('fSearch').value.toLowerCase().trim();
+
+  let visible = 0;
+  const rows  = document.querySelectorAll('#gridBody tr');
+  rows.forEach(tr => {
+    const d = tr.dataset;
+    let show = true;
+    if(cat   && d.cat?.toLowerCase()   !== cat)   show=false;
+    if(sub   && d.sub?.toLowerCase()   !== sub)   show=false;
+    if(ptype && d.ptype?.toLowerCase() !== ptype) show=false;
+    if(search && !((d.sku||'').toLowerCase().includes(search) || (d.name||'').toLowerCase().includes(search))) show=false;
+    if(filled==='filled'){
+      const allFilled = months.every(m => {
+        const inp = tr.querySelector('[data-month="'+m+'"]');
+        return inp && inp.value.trim() !== '';
+      });
+      if(!allFilled) show=false;
+    } else if(filled==='empty'){
+      const anyEmpty = months.some(m => {
+        const inp = tr.querySelector('[data-month="'+m+'"]');
+        return !inp || inp.value.trim() === '';
+      });
+      if(!anyEmpty) show=false;
+    }
+    tr.classList.toggle('hidden-row', !show);
+    if(show) visible++;
+  });
+  document.getElementById('filterCount').textContent = visible+' / '+allRows.length;
+}
+
+function clearFilters(){
+  ['fCat','fSub','fType','fFilled'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('fSearch').value='';
+  applyFilters();
+}
+
+/* ── Build table ──────────────────────────────────────────────────────── */
+function buildTable(rows){
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('tableWrap').style.display  = '';
+  document.getElementById('rowBadge').textContent = rows.length+' products';
+  document.getElementById('filterCount').textContent = rows.length+' / '+rows.length;
+
+  const head = document.getElementById('gridHead');
+  const body = document.getElementById('gridBody');
+  head.innerHTML=''; body.innerHTML='';
+
+  /* Header row 1: groups */
+  const tr1 = document.createElement('tr');
+  // Fixed cols
+  const thFix = document.createElement('th');
+  thFix.className='th-grp fix'; thFix.colSpan=3; thFix.textContent='PRODUCT INFO';
+  tr1.appendChild(thFix);
+  // DRR group
+  const thDRR = document.createElement('th');
+  thDRR.className='th-grp drr'; thDRR.colSpan=DRR_LABELS.length;
+  thDRR.textContent='HISTORICAL DRR ('+curCh+')';
+  tr1.appendChild(thDRR);
+  // Month group
+  const thMon = document.createElement('th');
+  thMon.className='th-grp month'; thMon.colSpan=months.length;
+  thMon.textContent='FORECAST — '+QUARTERS[curQ].label;
+  tr1.appendChild(thMon);
+  head.appendChild(tr1);
+
+  /* Header row 2: columns */
+  const tr2 = document.createElement('tr');
+  [['Category','fix','w:110px'],['Sub-Category','fix','w:140px'],['Product / SKU','fix','w:180px']].forEach(([lbl,cls,sty])=>{
+    const th=document.createElement('th'); th.className='th-col '+cls;
+    th.style.cssText=sty.replace('w:','min-width:'); th.textContent=lbl; tr2.appendChild(th);
+  });
+  DRR_SHORT.forEach(lbl=>{
+    const th=document.createElement('th'); th.className='th-col drr'; th.style.minWidth='72px';
+    th.title='Historical DRR — read only'; th.textContent=lbl; tr2.appendChild(th);
+  });
+  months.forEach(m=>{
+    const th=document.createElement('th'); th.className='th-col month'; th.style.minWidth='88px';
+    th.textContent=m; tr2.appendChild(th);
+  });
+  head.appendChild(tr2);
+
+  /* Data rows */
+  rows.forEach((row, ri)=>{
+    const tr = document.createElement('tr');
+    tr.dataset.cat   = row['Category']     || '';
+    tr.dataset.sub   = row['Sub-Category'] || '';
+    tr.dataset.ptype = row['Product Type'] || '';
+    tr.dataset.sku   = row['SKU']          || '';
+    tr.dataset.name  = row['Product Name'] || '';
+    tr.dataset.rid   = row['_row_id']      || 'r'+ri;
+
+    // Fixed cells
+    const fixCols = [
+      {key:'Category',    cls:'fix',     w:'110px'},
+      {key:'Sub-Category',cls:'fix',     w:'140px'},
+      {key:'Product Name',cls:'fix sku', w:'180px'},
+    ];
+    fixCols.forEach(({key,cls,w})=>{
+      const td=document.createElement('td'); td.className=cls; td.style.minWidth=w;
+      let txt = row[key]||'';
+      if(key==='Product Name') txt = txt + (row['SKU'] ? ' / '+row['SKU'] : '');
+      td.textContent=txt; tr.appendChild(td);
+    });
+
+    // DRR reference cells (read-only)
+    const ref = row['_ref'] || {};
+    DRR_LABELS.forEach(dl=>{
+      const td=document.createElement('td'); td.className='drr'; td.style.minWidth='72px';
+      const v = ref[dl];
+      td.textContent = (v !== undefined && v !== null && v !== '') ? Number(v).toFixed(1) : '—';
+      tr.appendChild(td);
+    });
+
+    // Editable month cells
+    months.forEach(m=>{
+      const td=document.createElement('td'); td.className='edit'; td.style.minWidth='88px';
+      const inp=document.createElement('input');
+      inp.type='text'; inp.value=row[m]||'';
+      inp.dataset.ri=ri; inp.dataset.month=m; inp.dataset.rid=row['_row_id']||'r'+ri;
+      if(isLocked){
+        inp.disabled=true;
+      } else {
+        inp.addEventListener('change', onCell);
+        inp.addEventListener('focus',  e=>e.target.select());
+        inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventDefault();e.target.blur();} });
+        inp.addEventListener('input', e=>{
+          e.target.classList.toggle('err', isNaN(parseFloat(e.target.value.replace(',',''))) && e.target.value.trim()!=='');
+        });
+      }
+      td.appendChild(inp); tr.appendChild(td);
+    });
+
+    body.appendChild(tr);
+  });
+}
+
+function onCell(e){
+  const ri  = parseInt(e.target.dataset.ri);
+  const m   = e.target.dataset.month;
+  let v = e.target.value.trim().replace(',','');
+  if(v===''){e.target.classList.remove('err'); return;}
+  const n=parseFloat(v);
+  if(isNaN(n)){e.target.classList.add('err'); return;}
+  e.target.classList.remove('err');
+  e.target.value=n;
+  allRows[ri][m]=n;
+}
+
+/* ── Sync inputs → allRows ────────────────────────────────────────────── */
+function syncInputs(){
+  document.querySelectorAll('#gridBody input[data-month]').forEach(inp=>{
+    const ri=parseInt(inp.dataset.ri), m=inp.dataset.month;
+    const v=inp.value.trim();
+    if(v!=='') allRows[ri][m]=parseFloat(v.replace(',',''))||v; else allRows[ri][m]='';
+  });
+}
+
+/* ── Collect only visible rows ────────────────────────────────────────── */
+function getVisibleRows(){
+  syncInputs();
+  const rows=[];
+  document.querySelectorAll('#gridBody tr:not(.hidden-row)').forEach(tr=>{
+    const ri=parseInt(tr.querySelector('input[data-ri]')?.dataset?.ri??'-1');
+    if(ri>=0) rows.push(allRows[ri]);
+  });
+  return rows;
+}
+
+/* ── Upload template ──────────────────────────────────────────────────── */
+function triggerUpload(){ document.getElementById('fileInput').click(); }
+async function uploadTpl(input){
+  if(!input.files.length) return;
+  const fd=new FormData(); fd.append('file',input.files[0]);
+  spin.show('Uploading template...');
+  try{
+    const r=await fetch('/api/upload-template/'+curQ,{method:'POST',body:fd});
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||'Upload failed.','e'); return; }
+    // Merge uploaded month values into allRows by _row_id match
+    const byId = {};
+    j.rows.forEach(ur=>{ byId[ur._row_id]=ur; });
+    allRows.forEach((row,ri)=>{
+      const match=byId[row._row_id];
+      if(match) months.forEach(m=>{ if(match[m]!==undefined) allRows[ri][m]=match[m]; });
+    });
+    // Refresh all inputs
+    document.querySelectorAll('#gridBody input[data-month]').forEach(inp=>{
+      const ri=parseInt(inp.dataset.ri), m=inp.dataset.month;
+      inp.value=allRows[ri][m]||'';
+    });
+    applyFilters();
+    toast('Template loaded — '+j.rows.length+' rows merged.');
+  }catch(e){ toast(e.message,'e'); }
+  finally{ spin.hide(); input.value=''; }
+}
+
+function downloadTpl(e){
+  e.preventDefault();
+  if(!curQ){ toast('Select a quarter first.','i'); return; }
+  window.location='/api/download-template/'+curQ;
+}
+
+/* ── Save draft ───────────────────────────────────────────────────────── */
+async function saveDraft(){
+  syncInputs();
+  if(!allRows.length){ toast('No data loaded.','e'); return; }
+  spin.show('Saving draft...');
+  try{
+    const r=await fetch('/api/save-draft/'+curQ,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({channel:curCh, rows:allRows})
+    });
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||'Save failed.','e'); return; }
+    toast('Draft saved.');
+  }catch(e){ toast(e.message,'e'); }
+  finally{ spin.hide(); }
+}
+
+/* ── Submit ───────────────────────────────────────────────────────────── */
+function openConfirm(){
+  if(isLocked){ toast('Form is locked. Use Request Refill.','i'); return; }
+  if(!allRows.length){ toast('Load data first.','e'); return; }
+  syncInputs();
+  const vis=document.querySelectorAll('#gridBody tr:not(.hidden-row)').length;
+  document.getElementById('confirmCount').textContent=vis;
+  openM('mConfirm');
+}
+
+async function confirmSubmit(){
+  closeM('mConfirm');
+  const rows=getVisibleRows();
+  spin.show('Submitting...');
+  try{
+    const r=await fetch('/api/submit/'+curQ,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({channel:curCh, rows:rows})
+    });
+    const j=await r.json();
+    if(r.status===409){ toast('Already submitted.','i'); applyUILock(true,j.submitted_at,false,false,0); return; }
+    if(r.status===422){ toast('Validation: '+((j.details||[]).slice(0,2).join('; ')),'e',6000); return; }
+    if(!r.ok){ toast(j.error||'Submit failed.','e'); return; }
+    applyUILock(true, j.submitted_at, false, false, j.revision);
+    document.getElementById('successTxt').innerHTML =
+      'Submitted at <strong>'+j.submitted_at+'</strong>'+(j.revision>1?' (Revision '+j.revision+')':'')+
+      '.<br>Admin team notified by email. You can download your submission below.';
+    openM('mSuccess');
+    toast('Forecast submitted.');
+    setStatus('Submitted — '+j.filename);
+  }catch(e){ toast(e.message,'e'); }
+  finally{ spin.hide(); }
+}
+
+function applyUILock(locked, at, refillReq, refillApproved, revision){
+  isLocked=locked;
+  document.getElementById('bodyEl').classList.toggle('locked',locked);
+  const pill=document.getElementById('sPill');
+  pill.className='status-pill '+(locked?'s-sub':'s-draft');
+  pill.textContent=locked?'Submitted':'Draft';
+  document.getElementById('banLock').classList.toggle('visible',locked);
+  document.getElementById('banRefill').classList.toggle('visible',refillReq&&!refillApproved);
+  if(locked && at){
+    document.getElementById('banUser').textContent='{{ user_name }}';
+    document.getElementById('banAt').textContent=at+(revision>1?' (Rev '+revision+')':'');
+  }
+  document.getElementById('btnSubmit').disabled=locked;
+  document.getElementById('btnDraft').disabled=locked;
+  document.getElementById('btnUpload').disabled=locked;
+  document.querySelectorAll('#gridBody input').forEach(i=>{ i.disabled=locked; });
+  // Add download + refill buttons
+  const tr=document.getElementById('toolRight');
+  if(locked && !document.getElementById('btnDl')){
+    const dl=document.createElement('button');
+    dl.id='btnDl'; dl.className='btn btn-blue'; dl.textContent='Download';
+    dl.onclick=downloadSub; tr.appendChild(dl);
+  }
+  if(locked && !refillReq && !document.getElementById('btnRefill')){
+    const rb=document.createElement('button');
+    rb.id='btnRefill'; rb.className='btn btn-warn'; rb.textContent='Request Refill';
+    rb.onclick=openRefillModal; tr.appendChild(rb);
+  }
+}
+
+/* ── Download ─────────────────────────────────────────────────────────── */
+async function downloadSub(){
+  spin.show('Preparing download...');
+  try{
+    const r=await fetch('/api/download-submission/'+curQ+'/'+encodeURIComponent(curCh));
+    if(!r.ok){ toast('File not available.','e'); return; }
+    const blob=await r.blob();
+    const cd=r.headers.get('Content-Disposition')||'';
+    const m=cd.match(/filename="?([^"]+)"?/);
+    dlBlob(blob, m?m[1]:'Forecast_Submission.xlsx');
+  }catch(e){ toast('Download failed.','e'); }
+  finally{ spin.hide(); }
+}
+
+function dlBlob(blob,name){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ── Refill ───────────────────────────────────────────────────────────── */
+function openRefillModal(){
+  document.getElementById('refillReason').value='';
+  document.getElementById('refillErr').textContent='';
+  openM('mRefill');
+}
+async function submitRefill(){
+  const reason=document.getElementById('refillReason').value.trim();
+  if(!reason){ document.getElementById('refillErr').textContent='Please enter a reason.'; return; }
+  closeM('mRefill');
+  spin.show('Sending request...');
+  try{
+    const r=await fetch('/api/request-refill/'+curQ+'/'+encodeURIComponent(curCh),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reason})
+    });
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||'Request failed.','e'); return; }
+    document.getElementById('banRefill').classList.add('visible');
+    const rb=document.getElementById('btnRefill');
+    if(rb){ rb.disabled=true; rb.textContent='Refill Requested'; }
+    toast('Refill request sent to admin.');
+  }catch(e){ toast(e.message,'e'); }
+  finally{ spin.hide(); }
+}
+
+/* ── Init ─────────────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', ()=>{
+  // Auto-load first initiated quarter
+  const firstActive = Object.keys(Q_STATUS).find(q=>Q_STATUS[q].initiated);
+  if(firstActive){
+    curQ=firstActive;
+    document.querySelectorAll('.q-btn').forEach(b=>b.classList.toggle('active',b.id==='qbtn-'+firstActive));
+    loadDRR();
+  } else {
+    setStatus('No active quarters. Admin must initiate a quarter first.');
+  }
+});
+</script>
+</body>
+</html>

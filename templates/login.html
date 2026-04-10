@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forecast — Wellbeing Nutrition</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+</head>
+<body>
+<div class="login-container">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Wellbeing Nutrition" class="logo" onerror="this.style.display='none'">
+    <h1>Forecast <span class="highlight">Submission</span></h1>
+    <p class="login-sub">DRR Forecast Tool &mdash; Wellbeing Nutrition</p>
+    <a href="{{ url_for('signin') }}" class="ms-login-btn">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg" alt="Microsoft" class="ms-logo">
+        Sign in with Microsoft
+    </a>
+</div>
+</body>
+</html>
