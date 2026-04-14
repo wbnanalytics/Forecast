@@ -28,7 +28,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--surface);heigh
 .nav-right{display:flex;align-items:center;gap:7px}
 .user-pill{background:rgba(255,255,255,.12);color:#fff;font-size:12px;font-weight:500;padding:5px 11px;border-radius:20px}
 .status-pill{font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px}
-.s-draft{background:#FEF9C3;color:#92400E}.s-sub{background:#DCFCE7;color:#14532D}
+.s-draft{background:#FEF9C3;color:#92400E}
+.s-sub{background:#DCFCE7;color:#14532D}
 .nav-btn{background:rgba(255,255,255,.12);color:#fff;border:none;padding:6px 13px;border-radius:var(--rad);font-size:12px;cursor:pointer;transition:background .15s;text-decoration:none;display:inline-flex;align-items:center}
 .nav-btn:hover{background:rgba(255,255,255,.22)}
 .admin-link{color:var(--g200);font-size:12px;text-decoration:none;padding:5px 9px;border-radius:var(--rad);transition:background .15s}
@@ -36,23 +37,26 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--surface);heigh
 
 /* Quarter bar */
 .qbar{background:#fff;border-bottom:1px solid var(--border);padding:7px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
-.q-btn{padding:5px 13px;border-radius:var(--rad);font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--t2);transition:all .15s;display:inline-flex;align-items:center;gap:5px}
-.q-btn:hover{border-color:var(--g500);color:var(--g700)}
+.q-btn{padding:6px 14px;border-radius:var(--rad);font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--t2);transition:all .15s;display:inline-flex;align-items:center;gap:6px}
+.q-btn:hover:not(:disabled){border-color:var(--g500);color:var(--g700)}
 .q-btn.active{background:var(--g700);color:#fff;border-color:var(--g700)}
-.q-btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
-.ch-select-wrap{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--t3)}
-.ch-select{padding:5px 10px;border:1px solid var(--border);border-radius:var(--rad);font-size:12px;background:#fff;cursor:pointer;outline:none;color:var(--t1)}
-.ch-select:focus{border-color:var(--g500)}
+.q-btn:disabled{opacity:.35;cursor:not-allowed}
+.q-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.q-dot.live{background:#22C55E}
+.q-dot.done{background:var(--g500)}
+.q-dot.off{background:var(--border-d)}
+.q-meta{font-size:10px;opacity:.75}
 
 /* Filter bar */
-.filter-bar{background:#fff;border-bottom:1px solid var(--border);padding:7px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+.filter-bar{background:#fff;border-bottom:1px solid var(--border);padding:7px 16px;display:none;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+.filter-bar.visible{display:flex}
 .filter-bar label{font-size:11px;color:var(--t3);font-weight:500}
-.filter-select,.filter-search{padding:5px 9px;border:1px solid var(--border);border-radius:var(--rad);font-size:12px;background:#fff;outline:none;color:var(--t1);cursor:pointer}
-.filter-select:focus,.filter-search:focus{border-color:var(--g500)}
-.filter-search{width:180px}
+.f-sel,.f-search{padding:5px 9px;border:1px solid var(--border);border-radius:var(--rad);font-size:12px;background:#fff;outline:none;color:var(--t1);cursor:pointer}
+.f-sel:focus,.f-search:focus{border-color:var(--g500)}
+.f-search{width:180px}
 .filter-count{margin-left:auto;font-size:11px;color:var(--t3);background:var(--surface);padding:3px 9px;border-radius:20px;border:1px solid var(--border)}
-.btn-clear-filters{font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px;transition:color .15s}
-.btn-clear-filters:hover{color:var(--danger)}
+.btn-clr{font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px}
+.btn-clr:hover{color:var(--danger)}
 
 /* Toolbar */
 .toolbar{background:#fff;border-bottom:1px solid var(--border);padding:7px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;gap:8px;flex-wrap:wrap}
@@ -63,17 +67,20 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--surface);heigh
 .btn:hover{background:var(--surface);color:var(--t1)}
 .btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
 .btn-primary{background:var(--g700);color:#fff;border-color:var(--g700)}
-.btn-primary:hover{background:var(--g900);border-color:var(--g900)}
+.btn-primary:hover{background:var(--g900)}
 .btn-blue{background:#2B6CB0;color:#fff;border-color:#2B6CB0}.btn-blue:hover{background:#1A4A8A}
 .btn-warn{background:#D97706;color:#fff;border-color:#D97706}.btn-warn:hover{background:#B45309}
 .row-badge{font-size:11px;color:var(--t3);padding:4px 9px;background:var(--surface);border-radius:20px;border:1px solid var(--border)}
 
 /* Banners */
-.banner{display:none;padding:8px 16px;font-size:12px;font-weight:500;flex-shrink:0;align-items:center;gap:8px}
-.banner.visible{display:flex}
+.banner{display:none;padding:9px 16px;font-size:12px;font-weight:500;flex-shrink:0;align-items:center;gap:8px}
+.banner.on{display:flex}
 .ban-lock{background:var(--warn-bg);border-bottom:1px solid var(--warn-bd);color:var(--warn-tx)}
 .ban-refill{background:#EFF6FF;border-bottom:1px solid #BFDBFE;color:#1E40AF}
+.ban-cool{background:#FFF1F2;border-bottom:1px solid #FECDD3;color:#9F1239}
 .ban-info{background:var(--g50);border-bottom:1px solid var(--g200);color:var(--g700)}
+.ban-new{background:#F0FFF4;border-bottom:1px solid var(--g200);color:var(--g700);cursor:pointer}
+.ban-new:hover{background:#D8F3DC}
 
 /* Table */
 .table-wrap{flex:1;overflow:auto;position:relative}
@@ -96,16 +103,21 @@ table.grid thead th:nth-child(-n+3){z-index:30}
 tbody tr:nth-child(even){background:var(--row-e)}
 tbody tr:nth-child(odd){background:var(--row-o)}
 tbody tr:hover{background:var(--cell-ok)}
-tbody tr.hidden-row{display:none}
+tbody tr.h{display:none}
 td{border:1px solid var(--border);height:30px;vertical-align:middle;padding:0}
 td.fix{background:var(--fix-bg);color:var(--fix-fg);font-size:11px;padding:0 8px}
 td.fix.sku{font-weight:600}
-td.drr{background:var(--drr-bg);text-align:center;font-size:11px;padding:0 6px;color:var(--drr-fg);font-weight:500}
+td.drr-cell{background:var(--drr-bg);text-align:center;font-size:11px;padding:0 6px;color:var(--drr-fg);font-weight:500}
 td.edit{text-align:center;min-width:82px;max-width:96px}
 td.edit input{width:100%;height:30px;border:none;background:transparent;text-align:center;font-size:11px;font-family:inherit;color:var(--t1);outline:none;padding:0 3px}
 td.edit input:focus{background:var(--cell-ok);box-shadow:inset 0 0 0 1px var(--g500)}
 td.edit input.err{color:var(--danger)}
 body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:not-allowed;pointer-events:none}
+
+/* Channel selector tabs (for DRR ref column switching) */
+.drr-ch-tabs{display:flex;gap:4px;align-items:center;font-size:11px;color:var(--t3);padding:0 4px}
+.drr-ch-tab{padding:2px 7px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:#fff;font-size:10px;font-weight:500;color:var(--t3);transition:all .1s}
+.drr-ch-tab.active{background:var(--g700);color:#fff;border-color:var(--g700)}
 
 /* Empty state */
 .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--t3);padding:60px 20px}
@@ -119,6 +131,16 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 .toast{position:fixed;bottom:28px;right:20px;padding:10px 18px;border-radius:var(--rad);font-size:12px;font-weight:500;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:9999;animation:fadeUp .2s ease;max-width:360px}
 .ts{background:var(--g700)}.te{background:var(--danger)}.ti{background:#2B6CB0}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Calculator */
+.cbtn{padding:12px 6px;border-radius:7px;border:1px solid var(--border);background:var(--white);font-size:15px;font-weight:500;cursor:pointer;color:var(--t1);transition:background .1s;text-align:center}
+.cbtn:hover{background:var(--surface)}
+.cbtn:active{background:var(--border);transform:scale(.96)}
+.cop{background:var(--g50);color:var(--g700);border-color:var(--g100)}
+.cop:hover{background:var(--g100)}
+.ceq{background:var(--g700);color:#fff;border-color:var(--g700);grid-column:span 1}
+.ceq:hover{background:var(--g900)}
+.cmod{background:var(--surface)}
 
 /* Spinner */
 .spin-ov{display:none;position:fixed;inset:0;background:rgba(255,255,255,.55);z-index:2000;justify-content:center;align-items:center;flex-direction:column;gap:10px}
@@ -136,10 +158,10 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 .modal-actions{display:flex;gap:8px;justify-content:flex-end}
 .modal textarea{width:100%;border:1px solid var(--border);border-radius:var(--rad);padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:72px;margin-bottom:14px;outline:none;transition:border-color .15s}
 .modal textarea:focus{border-color:var(--g500)}
-.modal .merr{color:var(--danger);font-size:11px;margin-bottom:10px}
+.merr{color:var(--danger);font-size:11px;margin-bottom:10px}
 </style>
 </head>
-<body class="{{ 'locked' if false else '' }}" id="bodyEl">
+<body id="bodyEl">
 
 <!-- Spinner -->
 <div class="spin-ov" id="spinner"><div class="spinner"></div><div class="spin-lbl" id="spinLbl">Loading...</div></div>
@@ -148,12 +170,15 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 <div class="mover" id="mConfirm">
 <div class="modal">
   <h2>Confirm Submission</h2>
-  <p>Submit forecast for <strong id="confirmCount">0</strong> visible products?<br>
-     <strong>{{ user_name }}</strong> &nbsp;&middot;&nbsp; {{ today }}<br><br>
-     Once submitted the form is locked. Use <em>Request Refill</em> to make changes.</p>
+  <p>Submit forecast for <strong id="confirmCount">0</strong> products?<br>
+     <strong>{{ user_name }}</strong> &nbsp;&middot;&nbsp; <span id="confirmQ"></span></p>
+  <div id="lockInfoBox" style="margin:14px 0;padding:10px 13px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;font-size:12px;color:#92400E;line-height:1.65">
+    <strong>🔒 2-Month Lock Rule:</strong><br>
+    <span id="lockInfoTxt">The current month and the next month will be locked after submission.<br>Only future months (current + 2) will be available for refill.</span>
+  </div>
   <div class="modal-actions">
     <button class="btn" onclick="closeM('mConfirm')">Cancel</button>
-    <button class="btn btn-primary" onclick="confirmSubmit()">Submit</button>
+    <button class="btn btn-primary" onclick="confirmSubmit()">Submit Forecast</button>
   </div>
 </div>
 </div>
@@ -162,7 +187,7 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 <div class="mover" id="mSuccess">
 <div class="modal">
   <h2>Forecast Submitted</h2>
-  <p id="successTxt">Submitted successfully.</p>
+  <p id="successTxt"></p>
   <div class="modal-actions">
     <button class="btn btn-blue" onclick="downloadSub()">Download Excel</button>
     <button class="btn" onclick="closeM('mSuccess')">Close</button>
@@ -174,7 +199,8 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 <div class="mover" id="mRefill">
 <div class="modal">
   <h2>Request Refill</h2>
-  <p>Describe why you need to re-submit. The admin will review and unlock the form.</p>
+  <p id="refillMonthsInfo" style="background:var(--g50);border:1px solid var(--g200);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--g900);margin-bottom:12px;display:none"></p>
+  <p style="font-size:13px;color:var(--t2);margin-bottom:12px">Describe why you need to revise the forecast. Admin will review and unlock the eligible months.</p>
   <textarea id="refillReason" placeholder="Describe the correction needed..."></textarea>
   <div class="merr" id="refillErr"></div>
   <div class="modal-actions">
@@ -184,6 +210,65 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 </div>
 </div>
 
+<!-- Floating Calculator Widget (draggable, always accessible) -->
+<div id="floatCalc" style="display:none;position:fixed;bottom:60px;right:20px;z-index:800;width:260px;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);border:1px solid var(--border);overflow:hidden;user-select:none;">
+  <!-- Drag handle / title bar -->
+  <div id="calcDragBar" style="background:var(--g900);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:move">
+    <div style="display:flex;align-items:center;gap:8px">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--g200)" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="10" y2="10"/><line x1="14" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="10" y2="14"/><line x1="14" y1="14" x2="16" y2="14"/></svg>
+      <span style="color:#fff;font-size:12px;font-weight:600;letter-spacing:.3px">Calculator</span>
+    </div>
+    <div style="display:flex;gap:4px">
+      <button onclick="toggleCalcMin()" title="Minimise" style="background:rgba(255,255,255,.15);border:none;color:#fff;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center" id="calcMinBtn">−</button>
+      <button onclick="toggleFloatCalc()" title="Close" style="background:rgba(255,255,255,.15);border:none;color:#fff;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center">×</button>
+    </div>
+  </div>
+  <!-- Body (collapsible) -->
+  <div id="calcBody" style="padding:12px">
+    <!-- Display -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;text-align:right">
+      <div id="calcExpr" style="font-size:10px;color:var(--t3);min-height:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px"></div>
+      <div id="calcVal" style="font-size:26px;font-weight:300;color:var(--t1);line-height:1.15;word-break:break-all">0</div>
+    </div>
+    <!-- Memory row -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:5px">
+      <button class="cbtn cmod" onclick="calcMem('MC')" title="Memory Clear" style="font-size:10px;padding:6px 2px">MC</button>
+      <button class="cbtn cmod" onclick="calcMem('MR')" title="Memory Recall" style="font-size:10px;padding:6px 2px">MR</button>
+      <button class="cbtn cmod" onclick="calcMem('M+')" title="Memory Add" style="font-size:10px;padding:6px 2px">M+</button>
+      <button class="cbtn cmod" onclick="calcMem('M-')" title="Memory Subtract" style="font-size:10px;padding:6px 2px">M−</button>
+    </div>
+    <!-- Keypad -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px">
+      <button class="cbtn cmod" onclick="calcOp('C')" style="grid-column:span 2;color:var(--danger);font-size:13px">C</button>
+      <button class="cbtn cmod" onclick="calcOp('⌫')" style="font-size:13px">⌫</button>
+      <button class="cbtn cop" onclick="calcOp('/')">÷</button>
+      <button class="cbtn" onclick="calcOp('7')">7</button>
+      <button class="cbtn" onclick="calcOp('8')">8</button>
+      <button class="cbtn" onclick="calcOp('9')">9</button>
+      <button class="cbtn cop" onclick="calcOp('*')">×</button>
+      <button class="cbtn" onclick="calcOp('4')">4</button>
+      <button class="cbtn" onclick="calcOp('5')">5</button>
+      <button class="cbtn" onclick="calcOp('6')">6</button>
+      <button class="cbtn cop" onclick="calcOp('-')">−</button>
+      <button class="cbtn" onclick="calcOp('1')">1</button>
+      <button class="cbtn" onclick="calcOp('2')">2</button>
+      <button class="cbtn" onclick="calcOp('3')">3</button>
+      <button class="cbtn cop" onclick="calcOp('+')" style="grid-row:span 2">+</button>
+      <button class="cbtn" onclick="calcOp('0')" style="grid-column:span 2">0</button>
+      <button class="cbtn" onclick="calcOp('.')">.</button>
+      <button class="cbtn ceq" onclick="calcOp('=')">=</button>
+    </div>
+    <!-- Memory display -->
+    <div id="calcMemDisplay" style="margin-top:7px;font-size:10px;color:var(--t3);text-align:right;min-height:14px"></div>
+  </div>
+</div>
+
+<!-- Floating calc toggle button (bottom-right fab) -->
+<button id="calcFab" onclick="toggleFloatCalc()" title="Open Calculator"
+  style="position:fixed;bottom:18px;right:20px;z-index:810;width:42px;height:42px;border-radius:50%;background:var(--g700);color:#fff;border:none;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.22);display:flex;align-items:center;justify-content:center;transition:background .15s">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="10" y2="10"/><line x1="14" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="10" y2="14"/><line x1="14" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="10" y2="18"/><line x1="14" y1="18" x2="16" y2="18"/></svg>
+</button>
+
 <!-- Nav -->
 <nav class="nav">
   <div class="nav-left">
@@ -191,556 +276,746 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
       <img src="{{ url_for('static', filename='logo.png') }}" alt="WBN" onerror="this.style.display='none'">
     </div>
     <div>
-      <div class="nav-title">Wellbeing Nutrition — Forecast</div>
+      <div class="nav-title">Wellbeing Nutrition — Forecast Submission</div>
       <div class="nav-date">{{ today }}</div>
     </div>
   </div>
   <div class="nav-right">
     {% if is_admin %}<a href="{{ url_for('admin_panel') }}" class="admin-link">Admin Panel</a>{% endif %}
     <span class="user-pill">{{ user_name }}</span>
+    <span id="chPill" style="display:none;background:rgba(183,228,199,.25);color:var(--g200);font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;"></span>
     <span class="status-pill s-draft" id="sPill">Draft</span>
     <a href="{{ url_for('logout') }}" class="nav-btn">Logout</a>
   </div>
 </nav>
 
 <!-- Quarter bar -->
-<div class="qbar">
+<div class="qbar" id="qbarEl">
   {% for qkey, qmeta in quarters.items() %}
   {% set qs = q_status.get(qkey, {}) %}
-  <button class="q-btn{% if loop.first %} active{% endif %}"
-          id="qbtn-{{ qkey }}"
-          onclick="selectQuarter('{{ qkey }}')"
-          {% if not qs.get('initiated') %}disabled title="Not yet initiated by admin"{% endif %}>
+  <button class="q-btn" id="qbtn-{{ qkey }}" onclick="selectQ('{{ qkey }}')"
+          {% if not qs.get('initiated') %}disabled{% endif %}>
+    {% if qs.get('submitted') %}
+      <span class="q-dot done"></span>
+    {% elif qs.get('initiated') %}
+      <span class="q-dot live"></span>
+    {% else %}
+      <span class="q-dot off"></span>
+    {% endif %}
     {{ qmeta.label }}
     {% if qs.get('initiated') %}
-      <span style="font-size:10px;opacity:.7;">({{ qs.sku_count }} SKUs)</span>
+      <span class="q-meta">({{ qs.sku_count }} SKUs)</span>
     {% endif %}
   </button>
-  {% if not loop.last %}<span style="color:var(--border-d)">|</span>{% endif %}
   {% endfor %}
+  <span id="pollDot" style="margin-left:auto;font-size:10px;color:var(--t3)">Auto-refreshing</span>
+</div>
 
-  {% if is_admin %}
-  <div class="ch-select-wrap">
-    <span>Channel:</span>
-    <select class="ch-select" id="chSelect" onchange="onChannelChange()">
-      {% for ch in channels %}<option value="{{ ch }}">{{ ch }}</option>{% endfor %}
-    </select>
-  </div>
-  {% elif user_channel %}
-  <div class="ch-select-wrap">
-    <span style="font-weight:600;color:var(--g700)">Channel: {{ user_channel }}</span>
-  </div>
-  {% endif %}
+<!-- New quarter notification banner -->
+<div class="banner ban-new" id="banNew" onclick="reloadPage()">
+  A new quarter has been activated by admin — click to reload and see it.
 </div>
 
 <!-- Filter bar -->
-<div class="filter-bar" id="filterBar" style="display:none">
+<div class="filter-bar" id="filterBar">
   <label>Filter:</label>
-  <select class="filter-select" id="fCat" onchange="applyFilters()">
-    <option value="">All Categories</option>
-  </select>
-  <select class="filter-select" id="fSub" onchange="applyFilters()">
-    <option value="">All Sub-Categories</option>
-  </select>
-  <select class="filter-select" id="fType" onchange="applyFilters()">
-    <option value="">All Product Types</option>
-  </select>
-  <select class="filter-select" id="fFilled" onchange="applyFilters()">
+  <select class="f-sel" id="fCat" onchange="applyFilters()"><option value="">All Categories</option></select>
+  <select class="f-sel" id="fSub" onchange="applyFilters()"><option value="">All Sub-Categories</option></select>
+  <select class="f-sel" id="fType" onchange="applyFilters()"><option value="">All Product Types</option></select>
+  <select class="f-sel" id="fFilled" onchange="applyFilters()">
     <option value="">All Rows</option>
     <option value="filled">Filled only</option>
     <option value="empty">Empty only</option>
   </select>
-  <input type="search" class="filter-search" id="fSearch" placeholder="Search SKU / Product..." oninput="applyFilters()">
-  <button class="btn-clear-filters" onclick="clearFilters()">Clear filters</button>
-  <span class="filter-count" id="filterCount">0 / 0</span>
+  <input type="search" class="f-search" id="fSearch" placeholder="Search SKU / Product..." oninput="applyFilters()">
+  <button class="btn-clr" onclick="clearFilters()">Clear</button>
+  <span class="filter-count" id="filterCount">—</span>
 </div>
 
 <!-- Toolbar -->
 <div class="toolbar" id="toolbarEl">
   <div class="toolbar-left">
-    <button class="btn" id="btnUpload" onclick="triggerUpload()">Load Template</button>
-    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="uploadTpl(this)">
-    <a class="btn" id="btnDownTpl" href="#" onclick="downloadTpl(event)">Download Template</a>
-    <span class="row-badge" id="rowBadge">0 products</span>
+    <!-- Admin only: Download template -->
+    {% if is_admin %}
+    <button class="btn" id="btnDownTpl" onclick="downloadTpl()">Download Template</button>
+    {% endif %}
+    <!-- DRR channel label (set dynamically) -->
+    <div id="drrChLabel" style="display:none;font-size:11px;color:var(--t3);padding:0 4px">
+      <span id="drrChName" style="font-weight:600;color:var(--drr-fg)"></span> DRR (historical reference)
+    </div>
+    <!-- Admin: channel selector tabs -->
+    <div class="drr-ch-tabs" id="drrChTabs" style="display:none">
+      <span style="font-size:10px;color:var(--t3)">DRR ref:</span>
+    </div>
+    <span class="row-badge" id="rowBadge" style="display:none">0 products</span>
   </div>
   <div class="toolbar-right" id="toolRight">
-    <button class="btn" id="btnDraft" onclick="saveDraft()">Save Draft</button>
-    <button class="btn btn-primary" id="btnSubmit" onclick="openConfirm()">Submit Forecast</button>
+    <button class="btn" id="btnDraft" onclick="saveDraft()" style="display:none">Save Draft</button>
+    <button class="btn btn-primary" id="btnSubmit" onclick="openConfirm()" style="display:none">Submit Forecast</button>
+
   </div>
 </div>
 
 <!-- Banners -->
 <div class="banner ban-lock" id="banLock">
   <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-  Forecast locked — submitted by <strong id="banUser">&nbsp;</strong>&nbsp; at <strong id="banAt">&nbsp;</strong>.
-  To make changes, click <strong>Request Refill</strong>.
+  Submitted by <strong>&nbsp;{{ user_name }}&nbsp;</strong> at <strong id="banAt">&nbsp;</strong>.
+  <span id="banLockedMonths" style="margin-left:8px;background:rgba(0,0,0,.08);padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600"></span>
+</div>
+<div class="banner ban-cool" id="banCool">
+  <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+  <span id="banCoolTxt">Current & next month are locked — no refill available for these months.</span>
 </div>
 <div class="banner ban-refill" id="banRefill">
   <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
   Refill requested — awaiting admin approval.
 </div>
-<div class="banner ban-info" id="banInfo" style="display:flex">
-  Select a quarter above to load data.
+<div class="banner ban-info" id="banInfo">
+  Select an active quarter above to load your forecast sheet.
 </div>
 
-<!-- Table or empty -->
+<!-- Table / empty state -->
 <div class="empty" id="emptyState">
   <svg width="44" height="44" fill="none" stroke="var(--border-d)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-  <h2>No Data Loaded</h2>
-  <p>Select an active quarter above, then use <strong>Download Template</strong><br>
-     to get the Excel format, fill it in, then <strong>Load Template</strong> to import.</p>
+  <h2 id="emptyTitle">No Active Quarter</h2>
+  <p id="emptyDesc">No quarter has been started yet. The admin will initiate a quarter and it will automatically appear here.</p>
 </div>
 <div class="table-wrap" id="tableWrap" style="display:none">
-  <table class="grid" id="gridTable">
-    <thead id="gridHead"></thead>
-    <tbody id="gridBody"></tbody>
-  </table>
+  <table class="grid"><thead id="gridHead"></thead><tbody id="gridBody"></tbody></table>
 </div>
 
-<!-- Status bar -->
+<!-- Statusbar -->
 <div class="statusbar">
-  <span id="statusMsg">Select a quarter to begin.</span>
+  <span id="statusMsg">Waiting for an active quarter...</span>
   <span>forecast.wbn &middot; Wellbeing Nutrition</span>
 </div>
 
 <script>
-/* ── Config from server ───────────────────────────────────────────────── */
+/* ── Server config ─────────────────────────────────────────────── */
 const IS_ADMIN   = {{ 'true' if is_admin else 'false' }};
-const USER_CH    = {{ ('"' + user_channel + '"') if user_channel else 'null' }};
-const CHANNELS   = {{ channels | tojson }};
 const QUARTERS   = {{ quarters | tojson }};
-const Q_STATUS   = {{ q_status | tojson }};
 const DRR_LABELS = {{ drr_labels | tojson }};
 const DRR_SHORT  = {{ drr_short | tojson }};
 
-/* ── State ────────────────────────────────────────────────────────────── */
-let curQ      = Object.keys(QUARTERS)[0];
-let curCh     = IS_ADMIN ? CHANNELS[0] : USER_CH;
-let allRows   = [];   // full unfiltered data
+/* ── State ─────────────────────────────────────────────────────── */
+let qStatus   = {{ q_status | tojson }};
+let curQ      = null;
+let allRows   = [];
 let months    = [];
+let channels  = [];
 let isLocked  = false;
-let filterOpts = {categories:[], sub_categories:[], product_types:[]};
+let curDrrCh  = null;
+let filterOpts= {categories:[],sub_categories:[],product_types:[]};
 
-/* ── Spinner & Toast ──────────────────────────────────────────────────── */
+/* ── Utilities ─────────────────────────────────────────────────── */
 const spin = {
   show(msg='Loading...'){
-    document.getElementById('spinLbl').textContent = msg;
+    document.getElementById('spinLbl').textContent=msg;
     document.getElementById('spinner').classList.add('open');
   },
   hide(){ document.getElementById('spinner').classList.remove('open'); }
 };
 let _tt;
-function toast(msg, type='s', dur=3500){
-  const el = document.getElementById('_toast') || document.createElement('div');
-  el.id='_toast'; el.className='toast t'+type; el.textContent=msg;
+function toast(msg,type='s',dur=3500){
+  const el=document.getElementById('_t')||document.createElement('div');
+  el.id='_t'; el.className='toast t'+type; el.textContent=msg;
   document.body.appendChild(el); clearTimeout(_tt);
-  _tt = setTimeout(()=>el.remove(), dur);
+  _tt=setTimeout(()=>el.remove(),dur);
 }
-function setStatus(m){ document.getElementById('statusMsg').textContent = m; }
+function setStatus(m){ document.getElementById('statusMsg').textContent=m; }
 function openM(id){ document.getElementById(id).classList.add('open'); }
 function closeM(id){ document.getElementById(id).classList.remove('open'); }
+function reloadPage(){ location.reload(); }
 
-/* ── Quarter / Channel selection ──────────────────────────────────────── */
-function selectQuarter(qkey){
-  if(!Q_STATUS[qkey] || !Q_STATUS[qkey].initiated){
-    toast('This quarter has not been initiated by admin yet.','i'); return;
+/* ── Quarter polling ─────────────────────────────────────────── */
+function startPolling(){
+  setInterval(async()=>{
+    try{
+      const r=await fetch('/api/quarter-status');
+      if(!r.ok) return;
+      const fresh=await r.json();
+      let newlyActive=false;
+      for(const qkey in fresh){
+        const wasOff=!qStatus[qkey]?.initiated;
+        const nowOn=fresh[qkey]?.initiated;
+        if(wasOff && nowOn) newlyActive=true;
+      }
+      qStatus=fresh;
+      refreshQBar();
+      if(newlyActive){
+        document.getElementById('banNew').classList.add('on');
+        if(!curQ) autoSelectBestQ();
+      }
+      if(curQ && qStatus[curQ]?.initiated && allRows.length===0 && !isLocked){
+        loadDRR(curQ);
+      }
+    }catch(e){}
+  }, 30000);
+}
+
+function refreshQBar(){
+  for(const qkey in QUARTERS){
+    const qs=qStatus[qkey]||{};
+    const btn=document.getElementById('qbtn-'+qkey);
+    if(!btn) continue;
+    btn.disabled=!qs.initiated;
+    const dot=btn.querySelector('.q-dot');
+    if(dot) dot.className='q-dot '+(qs.submitted?'done':(qs.initiated?'live':'off'));
+    const meta=btn.querySelector('.q-meta');
+    if(meta && qs.initiated) meta.textContent='('+qs.sku_count+' SKUs)';
   }
-  curQ = qkey;
-  document.querySelectorAll('.q-btn').forEach(b => b.classList.toggle('active', b.id === 'qbtn-'+qkey));
-  document.getElementById('banInfo').style.display='none';
-  loadDRR();
 }
 
-function onChannelChange(){
-  curCh = document.getElementById('chSelect').value;
-  if(curQ && Q_STATUS[curQ]?.initiated) loadDRR();
+function autoSelectBestQ(){
+  let best=null;
+  for(const qkey in QUARTERS){
+    const qs=qStatus[qkey]||{};
+    if(qs.initiated && !qs.submitted){ best=qkey; break; }
+  }
+  if(!best){
+    for(const qkey in QUARTERS){
+      if(qStatus[qkey]?.initiated){ best=qkey; break; }
+    }
+  }
+  if(best){ selectQ(best); }
+  else{
+    document.getElementById('banInfo').classList.add('on');
+    setStatus('No active quarters — waiting for admin to start one.');
+  }
 }
 
-/* ── Load DRR from server ─────────────────────────────────────────────── */
-async function loadDRR(){
-  if(!curQ || !curCh){ toast('Select a quarter and channel.','i'); return; }
-  spin.show('Loading DRR data...');
+function selectQ(qkey){
+  if(!qStatus[qkey]?.initiated){ toast('This quarter has not been started yet.','i'); return; }
+  document.getElementById('banInfo').classList.remove('on');
+  curQ=qkey;
+  document.querySelectorAll('.q-btn').forEach(b=>b.classList.toggle('active',b.id==='qbtn-'+qkey));
+  loadDRR(qkey);
+}
+
+/* ── Load DRR ─────────────────────────────────────────────────── */
+async function loadDRR(qkey){
+  spin.show('Loading forecast sheet...');
   try{
-    const url = '/api/load-drr/'+curQ+'?channel='+encodeURIComponent(curCh);
-    const r = await fetch(url);
-    const j = await r.json();
-    if(!r.ok){ toast(j.error||'Failed to load.','e'); return; }
-    months       = j.months;
-    allRows      = j.rows;
-    filterOpts   = j.filter_options || {categories:[],sub_categories:[],product_types:[]};
-    isLocked     = j.submitted;
+    const r=await fetch('/api/load-drr/'+qkey);
+    const j=await r.json();
+    if(!r.ok){ toast(j.error||'Failed to load.','e'); showEmpty('Load Failed',j.error||''); return; }
+    months      = j.months;
+    allRows     = j.rows;
+    filterOpts  = j.filter_options||{categories:[],sub_categories:[],product_types:[]};
+    isLocked    = j.submitted;
+    const userCh   = j.user_channel;
+    const allChs   = j.all_channels;
+    if(userCh){
+      const pill=document.getElementById('chPill');
+      pill.textContent=userCh; pill.style.display='';
+    }
+    const drrLabel=document.getElementById('drrChLabel');
+    const drrChName=document.getElementById('drrChName');
+    if(drrLabel && drrChName && userCh){
+      drrChName.textContent=userCh; drrLabel.style.display='';
+    }
+    if(allChs){
+      channels=allChs; curDrrCh=allChs[0]||null; buildDrrChTabs();
+    } else {
+      channels=[userCh]; curDrrCh=userCh;
+      document.getElementById('drrChTabs').style.display='none';
+    }
     populateFilters();
-    buildTable(allRows);
-    applyUILock(j.submitted, j.submitted_at, j.refill_requested, j.refill_approved, j.revision);
-    setStatus('Loaded '+allRows.length+' products for '+curQ+' / '+curCh+(isLocked?' — locked.':' — ready to edit.'));
-  }catch(e){ toast('Load failed: '+e.message,'e'); }
+    buildTable(allRows, userCh, allChs);
+    applyUIState(j);
+    setStatus('Loaded '+allRows.length+' products for '+QUARTERS[qkey].label
+      +(userCh?' — Channel: '+userCh:'')+(isLocked?' — submitted.':' — ready to fill.'));
+
+    // Update confirm modal lock info
+    if(j.locked_months && j.locked_months.length){
+      document.getElementById('lockInfoTxt').innerHTML=
+        '<strong>🔒 Locked after submit:</strong> '+j.locked_months.join(', ')+'<br>'+
+        (j.allowed_refill_months && j.allowed_refill_months.length
+          ? '✅ Refill available for: <strong>'+j.allowed_refill_months.join(', ')+'</strong>'
+          : '⚠️ No refill months available in this quarter.');
+    }
+  }catch(e){ toast('Error: '+e.message,'e'); }
   finally{ spin.hide(); }
 }
 
-/* ── Filters ──────────────────────────────────────────────────────────── */
-function populateFilters(){
-  function fill(id, opts){
-    const el = document.getElementById(id);
-    const cur = el.value;
-    el.innerHTML = '<option value="">'+el.options[0].text+'</option>';
-    opts.forEach(o => {
-      const opt = document.createElement('option');
-      opt.value = o; opt.textContent = o;
-      if(o===cur) opt.selected=true;
-      el.appendChild(opt);
+/* ── DRR channel tab selector ─────────────────────────────────── */
+function buildDrrChTabs(){
+  const wrap=document.getElementById('drrChTabs');
+  wrap.style.display='flex';
+  Array.from(wrap.querySelectorAll('.drr-ch-tab')).forEach(t=>t.remove());
+  channels.forEach(ch=>{
+    const btn=document.createElement('button');
+    btn.className='drr-ch-tab'+(ch===curDrrCh?' active':'');
+    btn.textContent=ch; btn.onclick=()=>switchDrrCh(ch);
+    wrap.appendChild(btn);
+  });
+}
+
+function switchDrrCh(ch){
+  curDrrCh=ch;
+  document.querySelectorAll('.drr-ch-tab').forEach(t=>t.classList.toggle('active',t.textContent===ch));
+  document.querySelectorAll('#gridBody tr').forEach((tr,ri)=>{
+    if(ri>=allRows.length) return;
+    const refs=allRows[ri]._refs||{};
+    const chRefs=refs[ch]||{};
+    tr.querySelectorAll('[data-drrlabel]').forEach(td=>{
+      const lbl=td.dataset.drrlabel;
+      const v=chRefs[lbl];
+      td.textContent=(v!==undefined&&v!==null&&v!=='0.00'&&v!==0)?Number(v).toFixed(1):'—';
     });
+  });
+}
+
+/* ── Filters ──────────────────────────────────────────────────── */
+function populateFilters(){
+  function fill(id,opts,label){
+    const el=document.getElementById(id);
+    el.innerHTML='<option value="">'+label+'</option>';
+    opts.forEach(o=>{ const op=document.createElement('option'); op.value=o; op.textContent=o; el.appendChild(op); });
   }
-  fill('fCat',  filterOpts.categories);
-  fill('fSub',  filterOpts.sub_categories);
-  fill('fType', filterOpts.product_types);
-  document.getElementById('filterBar').style.display = 'flex';
+  fill('fCat', filterOpts.categories,    'All Categories');
+  fill('fSub', filterOpts.sub_categories,'All Sub-Categories');
+  fill('fType',filterOpts.product_types, 'All Product Types');
+  document.getElementById('filterBar').classList.add('visible');
 }
 
 function applyFilters(){
-  const cat    = document.getElementById('fCat').value.toLowerCase();
-  const sub    = document.getElementById('fSub').value.toLowerCase();
-  const ptype  = document.getElementById('fType').value.toLowerCase();
-  const filled = document.getElementById('fFilled').value;
-  const search = document.getElementById('fSearch').value.toLowerCase().trim();
-
-  let visible = 0;
-  const rows  = document.querySelectorAll('#gridBody tr');
-  rows.forEach(tr => {
-    const d = tr.dataset;
-    let show = true;
-    if(cat   && d.cat?.toLowerCase()   !== cat)   show=false;
-    if(sub   && d.sub?.toLowerCase()   !== sub)   show=false;
-    if(ptype && d.ptype?.toLowerCase() !== ptype) show=false;
-    if(search && !((d.sku||'').toLowerCase().includes(search) || (d.name||'').toLowerCase().includes(search))) show=false;
+  const cat   =document.getElementById('fCat').value.toLowerCase();
+  const sub   =document.getElementById('fSub').value.toLowerCase();
+  const ptype =document.getElementById('fType').value.toLowerCase();
+  const filled=document.getElementById('fFilled').value;
+  const search=document.getElementById('fSearch').value.toLowerCase().trim();
+  let vis=0;
+  document.querySelectorAll('#gridBody tr').forEach(tr=>{
+    const d=tr.dataset; let show=true;
+    if(cat   && (d.cat||'').toLowerCase()  !==cat)   show=false;
+    if(sub   && (d.sub||'').toLowerCase()  !==sub)   show=false;
+    if(ptype && (d.ptype||'').toLowerCase()!==ptype) show=false;
+    if(search && !((d.sku||'').toLowerCase().includes(search)||(d.name||'').toLowerCase().includes(search))) show=false;
     if(filled==='filled'){
-      const allFilled = months.every(m => {
-        const inp = tr.querySelector('[data-month="'+m+'"]');
-        return inp && inp.value.trim() !== '';
-      });
-      if(!allFilled) show=false;
+      const ok=months.every(m=>{ const i=tr.querySelector('[data-month="'+m+'"]'); return i&&i.value.trim()!==''; });
+      if(!ok) show=false;
     } else if(filled==='empty'){
-      const anyEmpty = months.some(m => {
-        const inp = tr.querySelector('[data-month="'+m+'"]');
-        return !inp || inp.value.trim() === '';
-      });
-      if(!anyEmpty) show=false;
+      const any=months.some(m=>{ const i=tr.querySelector('[data-month="'+m+'"]'); return !i||i.value.trim()===''; });
+      if(!any) show=false;
     }
-    tr.classList.toggle('hidden-row', !show);
-    if(show) visible++;
+    tr.classList.toggle('h',!show);
+    if(show) vis++;
   });
-  document.getElementById('filterCount').textContent = visible+' / '+allRows.length;
+  document.getElementById('filterCount').textContent=vis+' / '+allRows.length;
 }
 
 function clearFilters(){
-  ['fCat','fSub','fType','fFilled'].forEach(id => document.getElementById(id).value='');
+  ['fCat','fSub','fType','fFilled'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('fSearch').value='';
   applyFilters();
 }
 
-/* ── Build table ──────────────────────────────────────────────────────── */
-function buildTable(rows){
-  document.getElementById('emptyState').style.display = 'none';
-  document.getElementById('tableWrap').style.display  = '';
-  document.getElementById('rowBadge').textContent = rows.length+' products';
-  document.getElementById('filterCount').textContent = rows.length+' / '+rows.length;
-
-  const head = document.getElementById('gridHead');
-  const body = document.getElementById('gridBody');
+/* ── Build table ──────────────────────────────────────────────── */
+function buildTable(rows, userCh, allChs){
+  const isSingleCh = !!userCh && !allChs;
+  document.getElementById('emptyState').style.display='none';
+  document.getElementById('tableWrap').style.display='';
+  document.getElementById('rowBadge').style.display='';
+  document.getElementById('btnDraft').style.display='';
+  document.getElementById('btnSubmit').style.display='';
+  document.getElementById('rowBadge').textContent=rows.length+' products';
+  document.getElementById('filterCount').textContent=rows.length+' / '+rows.length;
+  const head=document.getElementById('gridHead');
+  const body=document.getElementById('gridBody');
   head.innerHTML=''; body.innerHTML='';
-
-  /* Header row 1: groups */
-  const tr1 = document.createElement('tr');
-  // Fixed cols
-  const thFix = document.createElement('th');
-  thFix.className='th-grp fix'; thFix.colSpan=3; thFix.textContent='PRODUCT INFO';
-  tr1.appendChild(thFix);
-  // DRR group
-  const thDRR = document.createElement('th');
-  thDRR.className='th-grp drr'; thDRR.colSpan=DRR_LABELS.length;
-  thDRR.textContent='HISTORICAL DRR ('+curCh+')';
-  tr1.appendChild(thDRR);
-  // Month group
-  const thMon = document.createElement('th');
-  thMon.className='th-grp month'; thMon.colSpan=months.length;
-  thMon.textContent='FORECAST — '+QUARTERS[curQ].label;
-  tr1.appendChild(thMon);
+  const tr1=document.createElement('tr');
+  const thFix=document.createElement('th'); thFix.className='th-grp fix'; thFix.colSpan=3;
+  thFix.textContent='PRODUCT INFO'; tr1.appendChild(thFix);
+  const thDRR=document.createElement('th'); thDRR.className='th-grp drr'; thDRR.colSpan=DRR_LABELS.length;
+  thDRR.textContent='HISTORICAL DRR'+(userCh?' — '+userCh+' channel':'')+(allChs?' (select channel above)':''); tr1.appendChild(thDRR);
+  const thMon=document.createElement('th'); thMon.className='th-grp month'; thMon.colSpan=months.length;
+  thMon.textContent='FORECAST — '+(QUARTERS[curQ]?.label||curQ); tr1.appendChild(thMon);
   head.appendChild(tr1);
-
-  /* Header row 2: columns */
-  const tr2 = document.createElement('tr');
-  [['Category','fix','w:110px'],['Sub-Category','fix','w:140px'],['Product / SKU','fix','w:180px']].forEach(([lbl,cls,sty])=>{
-    const th=document.createElement('th'); th.className='th-col '+cls;
-    th.style.cssText=sty.replace('w:','min-width:'); th.textContent=lbl; tr2.appendChild(th);
+  const tr2=document.createElement('tr');
+  [['Category','fix','110px'],['Sub-Category','fix','140px'],['Product / SKU','fix sku','180px']].forEach(([l,c,w])=>{
+    const th=document.createElement('th'); th.className='th-col '+c; th.style.minWidth=w;
+    th.textContent=l; tr2.appendChild(th);
   });
-  DRR_SHORT.forEach(lbl=>{
+  DRR_SHORT.forEach(l=>{
     const th=document.createElement('th'); th.className='th-col drr'; th.style.minWidth='72px';
-    th.title='Historical DRR — read only'; th.textContent=lbl; tr2.appendChild(th);
+    th.title='Historical DRR (read-only)'; th.textContent=l; tr2.appendChild(th);
   });
   months.forEach(m=>{
     const th=document.createElement('th'); th.className='th-col month'; th.style.minWidth='88px';
     th.textContent=m; tr2.appendChild(th);
   });
   head.appendChild(tr2);
-
-  /* Data rows */
-  rows.forEach((row, ri)=>{
-    const tr = document.createElement('tr');
-    tr.dataset.cat   = row['Category']     || '';
-    tr.dataset.sub   = row['Sub-Category'] || '';
-    tr.dataset.ptype = row['Product Type'] || '';
-    tr.dataset.sku   = row['SKU']          || '';
-    tr.dataset.name  = row['Product Name'] || '';
-    tr.dataset.rid   = row['_row_id']      || 'r'+ri;
-
-    // Fixed cells
-    const fixCols = [
-      {key:'Category',    cls:'fix',     w:'110px'},
-      {key:'Sub-Category',cls:'fix',     w:'140px'},
-      {key:'Product Name',cls:'fix sku', w:'180px'},
-    ];
-    fixCols.forEach(({key,cls,w})=>{
-      const td=document.createElement('td'); td.className=cls; td.style.minWidth=w;
-      let txt = row[key]||'';
-      if(key==='Product Name') txt = txt + (row['SKU'] ? ' / '+row['SKU'] : '');
-      td.textContent=txt; tr.appendChild(td);
+  rows.forEach((row,ri)=>{
+    const tr=document.createElement('tr');
+    tr.dataset.cat  =row['Category']    ||'';
+    tr.dataset.sub  =row['Sub-Category']||'';
+    tr.dataset.ptype=row['Product Type']||'';
+    tr.dataset.sku  =row['SKU']         ||'';
+    tr.dataset.name =row['Product Name']||'';
+    [['Category','fix','110px'],['Sub-Category','fix','140px']].forEach(([k,c,w])=>{
+      const td=document.createElement('td'); td.className=c; td.style.minWidth=w;
+      td.textContent=row[k]||''; tr.appendChild(td);
     });
-
-    // DRR reference cells (read-only)
-    const ref = row['_ref'] || {};
+    const tdSku=document.createElement('td'); tdSku.className='fix sku'; tdSku.style.minWidth='180px';
+    tdSku.textContent=(row['Product Name']||'')+(row['SKU']?' / '+row['SKU']:'');
+    tr.appendChild(tdSku);
+    const ref = isSingleCh ? (row['_ref']||{}) : ((row['_refs']||{})[curDrrCh]||{});
     DRR_LABELS.forEach(dl=>{
-      const td=document.createElement('td'); td.className='drr'; td.style.minWidth='72px';
-      const v = ref[dl];
-      td.textContent = (v !== undefined && v !== null && v !== '') ? Number(v).toFixed(1) : '—';
+      const td=document.createElement('td'); td.className='drr-cell'; td.style.minWidth='72px';
+      td.dataset.drrlabel=dl;
+      const v=ref[dl];
+      td.textContent=(v!==undefined&&v!==null&&v!==0&&v!=='0.00')?Number(v).toFixed(1):'—';
       tr.appendChild(td);
     });
-
-    // Editable month cells
     months.forEach(m=>{
       const td=document.createElement('td'); td.className='edit'; td.style.minWidth='88px';
       const inp=document.createElement('input');
       inp.type='text'; inp.value=row[m]||'';
-      inp.dataset.ri=ri; inp.dataset.month=m; inp.dataset.rid=row['_row_id']||'r'+ri;
+      inp.dataset.ri=ri; inp.dataset.month=m;
       if(isLocked){
         inp.disabled=true;
       } else {
-        inp.addEventListener('change', onCell);
-        inp.addEventListener('focus',  e=>e.target.select());
-        inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventDefault();e.target.blur();} });
-        inp.addEventListener('input', e=>{
-          e.target.classList.toggle('err', isNaN(parseFloat(e.target.value.replace(',',''))) && e.target.value.trim()!=='');
+        inp.addEventListener('change',onCell);
+        inp.addEventListener('focus',e=>e.target.select());
+        inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();e.target.blur();} });
+        inp.addEventListener('input',e=>{
+          const v=e.target.value.trim().replace(',','');
+          e.target.classList.toggle('err',v!==''&&isNaN(parseFloat(v)));
         });
       }
       td.appendChild(inp); tr.appendChild(td);
     });
-
     body.appendChild(tr);
   });
 }
 
 function onCell(e){
-  const ri  = parseInt(e.target.dataset.ri);
-  const m   = e.target.dataset.month;
-  let v = e.target.value.trim().replace(',','');
-  if(v===''){e.target.classList.remove('err'); return;}
+  const ri=parseInt(e.target.dataset.ri), m=e.target.dataset.month;
+  let v=e.target.value.trim().replace(',','');
+  if(v===''){e.target.classList.remove('err');allRows[ri][m]='';return;}
   const n=parseFloat(v);
-  if(isNaN(n)){e.target.classList.add('err'); return;}
+  if(isNaN(n)){e.target.classList.add('err');return;}
   e.target.classList.remove('err');
-  e.target.value=n;
-  allRows[ri][m]=n;
+  e.target.value=n; allRows[ri][m]=n;
 }
 
-/* ── Sync inputs → allRows ────────────────────────────────────────────── */
+/* ── Apply UI lock/unlock state ───────────────────────────────── */
+function applyUIState(j){
+  isLocked=j.submitted;
+  document.getElementById('bodyEl').classList.toggle('locked',isLocked);
+  const pill=document.getElementById('sPill');
+  pill.className='status-pill '+(isLocked?'s-sub':'s-draft');
+  pill.textContent=isLocked?'Submitted':'Draft';
+
+  document.getElementById('banLock').classList.toggle('on',isLocked);
+  if(isLocked){
+    document.getElementById('banAt').textContent=j.submitted_at+(j.revision>1?' (Rev '+j.revision+')':'');
+    // Show locked months badge
+    const lmEl=document.getElementById('banLockedMonths');
+    if(j.locked_months && j.locked_months.length){
+      lmEl.textContent='🔒 Locked: '+j.locked_months.join(', ');
+      lmEl.style.display='';
+    }
+    if(j.can_refill && j.allowed_refill_months){
+      document.getElementById('banAt').textContent=(j.submitted_at||'')
+        +' — refill available for: '+j.allowed_refill_months.join(', ');
+    }
+  }
+
+  const cooldown=j.cooldown_active;
+  const canRefill=j.can_refill;
+  document.getElementById('banCool').classList.toggle('on',isLocked&&cooldown&&!canRefill);
+  if(isLocked&&cooldown){
+    document.getElementById('banCoolTxt').textContent=
+      j.cooldown_msg||'Current & next month are locked — no refill available for these months.';
+  }
+
+  document.getElementById('banRefill').classList.toggle('on',j.refill_requested&&!isLocked);
+
+  document.getElementById('btnSubmit').disabled=isLocked;
+  document.getElementById('btnDraft').disabled=isLocked;
+  document.querySelectorAll('#gridBody input').forEach(i=>i.disabled=isLocked);
+
+  const tr=document.getElementById('toolRight');
+  if(isLocked && !document.getElementById('btnDl')){
+    const dl=document.createElement('button');
+    dl.id='btnDl'; dl.className='btn btn-blue'; dl.textContent='Download Submission';
+    dl.onclick=downloadSub; tr.appendChild(dl);
+  }
+  const existingRefill=document.getElementById('btnRefill');
+  if(isLocked && !cooldown && !j.refill_requested && !existingRefill){
+    const rb=document.createElement('button');
+    rb.id='btnRefill'; rb.className='btn btn-warn'; rb.textContent='Request Refill';
+    rb.onclick=()=>openRefillModal(j.allowed_refill_months); tr.appendChild(rb);
+  }
+  if(existingRefill && (j.refill_requested||!isLocked||cooldown)){
+    existingRefill.remove();
+  }
+}
+
+/* ── Sync inputs → allRows ─────────────────────────────────────  */
 function syncInputs(){
   document.querySelectorAll('#gridBody input[data-month]').forEach(inp=>{
     const ri=parseInt(inp.dataset.ri), m=inp.dataset.month;
     const v=inp.value.trim();
-    if(v!=='') allRows[ri][m]=parseFloat(v.replace(',',''))||v; else allRows[ri][m]='';
+    allRows[ri][m]=v!==''?(parseFloat(v.replace(',',''))||v):'';
   });
 }
 
-/* ── Collect only visible rows ────────────────────────────────────────── */
-function getVisibleRows(){
-  syncInputs();
-  const rows=[];
-  document.querySelectorAll('#gridBody tr:not(.hidden-row)').forEach(tr=>{
-    const ri=parseInt(tr.querySelector('input[data-ri]')?.dataset?.ri??'-1');
-    if(ri>=0) rows.push(allRows[ri]);
-  });
-  return rows;
-}
-
-/* ── Upload template ──────────────────────────────────────────────────── */
-function triggerUpload(){ document.getElementById('fileInput').click(); }
-async function uploadTpl(input){
-  if(!input.files.length) return;
-  const fd=new FormData(); fd.append('file',input.files[0]);
-  spin.show('Uploading template...');
-  try{
-    const r=await fetch('/api/upload-template/'+curQ,{method:'POST',body:fd});
-    const j=await r.json();
-    if(!r.ok){ toast(j.error||'Upload failed.','e'); return; }
-    // Merge uploaded month values into allRows by _row_id match
-    const byId = {};
-    j.rows.forEach(ur=>{ byId[ur._row_id]=ur; });
-    allRows.forEach((row,ri)=>{
-      const match=byId[row._row_id];
-      if(match) months.forEach(m=>{ if(match[m]!==undefined) allRows[ri][m]=match[m]; });
-    });
-    // Refresh all inputs
-    document.querySelectorAll('#gridBody input[data-month]').forEach(inp=>{
-      const ri=parseInt(inp.dataset.ri), m=inp.dataset.month;
-      inp.value=allRows[ri][m]||'';
-    });
-    applyFilters();
-    toast('Template loaded — '+j.rows.length+' rows merged.');
-  }catch(e){ toast(e.message,'e'); }
-  finally{ spin.hide(); input.value=''; }
-}
-
-function downloadTpl(e){
-  e.preventDefault();
-  if(!curQ){ toast('Select a quarter first.','i'); return; }
-  window.location='/api/download-template/'+curQ;
-}
-
-/* ── Save draft ───────────────────────────────────────────────────────── */
+/* ── Save draft ─────────────────────────────────────────────────  */
 async function saveDraft(){
   syncInputs();
-  if(!allRows.length){ toast('No data loaded.','e'); return; }
+  if(!allRows.length){toast('No data.','e');return;}
   spin.show('Saving draft...');
   try{
     const r=await fetch('/api/save-draft/'+curQ,{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({channel:curCh, rows:allRows})
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rows:allRows})
     });
     const j=await r.json();
-    if(!r.ok){ toast(j.error||'Save failed.','e'); return; }
+    if(!r.ok){toast(j.error||'Failed.','e');return;}
     toast('Draft saved.');
-  }catch(e){ toast(e.message,'e'); }
-  finally{ spin.hide(); }
+  }catch(e){toast(e.message,'e');}
+  finally{spin.hide();}
 }
 
-/* ── Submit ───────────────────────────────────────────────────────────── */
+/* ── Submit ────────────────────────────────────────────────────── */
 function openConfirm(){
-  if(isLocked){ toast('Form is locked. Use Request Refill.','i'); return; }
-  if(!allRows.length){ toast('Load data first.','e'); return; }
+  if(isLocked){toast('Form is locked.','i');return;}
+  if(!allRows.length){toast('No data loaded.','e');return;}
   syncInputs();
-  const vis=document.querySelectorAll('#gridBody tr:not(.hidden-row)').length;
+  const vis=document.querySelectorAll('#gridBody tr:not(.h)').length;
   document.getElementById('confirmCount').textContent=vis;
+  document.getElementById('confirmQ').textContent=QUARTERS[curQ]?.label||curQ;
   openM('mConfirm');
 }
 
 async function confirmSubmit(){
   closeM('mConfirm');
-  const rows=getVisibleRows();
+  syncInputs();
+  const rows=allRows.filter((_,ri)=>{
+    const tr=document.querySelector('#gridBody tr:nth-child('+(ri+1)+')');
+    return tr&&!tr.classList.contains('h');
+  });
   spin.show('Submitting...');
   try{
     const r=await fetch('/api/submit/'+curQ,{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({channel:curCh, rows:rows})
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rows:rows})
     });
     const j=await r.json();
-    if(r.status===409){ toast('Already submitted.','i'); applyUILock(true,j.submitted_at,false,false,0); return; }
-    if(r.status===422){ toast('Validation: '+((j.details||[]).slice(0,2).join('; ')),'e',6000); return; }
-    if(!r.ok){ toast(j.error||'Submit failed.','e'); return; }
-    applyUILock(true, j.submitted_at, false, false, j.revision);
-    document.getElementById('successTxt').innerHTML =
-      'Submitted at <strong>'+j.submitted_at+'</strong>'+(j.revision>1?' (Revision '+j.revision+')':'')+
-      '.<br>Admin team notified by email. You can download your submission below.';
+    if(r.status===409){toast('Already submitted.','i');return;}
+    if(r.status===422){toast('Validation: '+((j.details||[]).slice(0,2).join('; ')),'e',6000);return;}
+    if(!r.ok){toast(j.error||'Failed.','e');return;}
+    applyUIState({...j, submitted:true, cooldown_active:true, refill_requested:false});
+    const lockNote = (j.locked_months&&j.locked_months.length)
+      ? '<br><strong>🔒 Locked: '+j.locked_months.join(', ')+'</strong>'
+      : '';
+    const refillNote = (j.can_refill&&j.allowed_refill_months&&j.allowed_refill_months.length)
+      ? '<br>✅ Refill available for: <strong>'+j.allowed_refill_months.join(', ')+'</strong>'
+      : '<br>⚠️ No refill available in this quarter.';
+    document.getElementById('successTxt').innerHTML=
+      'Submitted at <strong>'+j.submitted_at+'</strong>'+(j.revision>1?' — Revision '+j.revision:'')+'.<br><br>'
+      +'The admin team has been notified by email.'
+      +lockNote+refillNote;
     openM('mSuccess');
     toast('Forecast submitted.');
     setStatus('Submitted — '+j.filename);
-  }catch(e){ toast(e.message,'e'); }
-  finally{ spin.hide(); }
+    qStatus[curQ]={...(qStatus[curQ]||{}),submitted:true};
+    refreshQBar();
+  }catch(e){toast(e.message,'e');}
+  finally{spin.hide();}
 }
 
-function applyUILock(locked, at, refillReq, refillApproved, revision){
-  isLocked=locked;
-  document.getElementById('bodyEl').classList.toggle('locked',locked);
-  const pill=document.getElementById('sPill');
-  pill.className='status-pill '+(locked?'s-sub':'s-draft');
-  pill.textContent=locked?'Submitted':'Draft';
-  document.getElementById('banLock').classList.toggle('visible',locked);
-  document.getElementById('banRefill').classList.toggle('visible',refillReq&&!refillApproved);
-  if(locked && at){
-    document.getElementById('banUser').textContent='{{ user_name }}';
-    document.getElementById('banAt').textContent=at+(revision>1?' (Rev '+revision+')':'');
-  }
-  document.getElementById('btnSubmit').disabled=locked;
-  document.getElementById('btnDraft').disabled=locked;
-  document.getElementById('btnUpload').disabled=locked;
-  document.querySelectorAll('#gridBody input').forEach(i=>{ i.disabled=locked; });
-  // Add download + refill buttons
-  const tr=document.getElementById('toolRight');
-  if(locked && !document.getElementById('btnDl')){
-    const dl=document.createElement('button');
-    dl.id='btnDl'; dl.className='btn btn-blue'; dl.textContent='Download';
-    dl.onclick=downloadSub; tr.appendChild(dl);
-  }
-  if(locked && !refillReq && !document.getElementById('btnRefill')){
-    const rb=document.createElement('button');
-    rb.id='btnRefill'; rb.className='btn btn-warn'; rb.textContent='Request Refill';
-    rb.onclick=openRefillModal; tr.appendChild(rb);
-  }
-}
-
-/* ── Download ─────────────────────────────────────────────────────────── */
+/* ── Download ──────────────────────────────────────────────────── */
 async function downloadSub(){
   spin.show('Preparing download...');
   try{
-    const r=await fetch('/api/download-submission/'+curQ+'/'+encodeURIComponent(curCh));
-    if(!r.ok){ toast('File not available.','e'); return; }
+    const r=await fetch('/api/download-submission/'+curQ);
+    if(!r.ok){toast('File not available.','e');return;}
     const blob=await r.blob();
     const cd=r.headers.get('Content-Disposition')||'';
     const m=cd.match(/filename="?([^"]+)"?/);
-    dlBlob(blob, m?m[1]:'Forecast_Submission.xlsx');
-  }catch(e){ toast('Download failed.','e'); }
-  finally{ spin.hide(); }
+    dlBlob(blob,m?m[1]:'Forecast_Submission.xlsx');
+  }catch(e){toast('Download failed.','e');}
+  finally{spin.hide();}
 }
+function dlBlob(blob,name){const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=name;a.click();URL.revokeObjectURL(u);}
+function downloadTpl(){if(!curQ){toast('Select a quarter first.','i');return;}window.location='/api/download-template/'+curQ;}
 
-function dlBlob(blob,name){
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=name; a.click();
-  URL.revokeObjectURL(url);
-}
-
-/* ── Refill ───────────────────────────────────────────────────────────── */
-function openRefillModal(){
+/* ── Refill ────────────────────────────────────────────────────── */
+function openRefillModal(allowedMonths){
   document.getElementById('refillReason').value='';
   document.getElementById('refillErr').textContent='';
+  const info=document.getElementById('refillMonthsInfo');
+  if(allowedMonths && allowedMonths.length){
+    info.innerHTML='✅ You can refill the following months: <strong>'+allowedMonths.join(', ')+'</strong><br><small>Current &amp; next months are locked under the 2-month lock rule.</small>';
+    info.style.display='';
+  } else {
+    info.style.display='none';
+  }
   openM('mRefill');
 }
 async function submitRefill(){
   const reason=document.getElementById('refillReason').value.trim();
-  if(!reason){ document.getElementById('refillErr').textContent='Please enter a reason.'; return; }
-  closeM('mRefill');
-  spin.show('Sending request...');
+  if(!reason){document.getElementById('refillErr').textContent='Please enter a reason.';return;}
+  closeM('mRefill'); spin.show('Sending request...');
   try{
-    const r=await fetch('/api/request-refill/'+curQ+'/'+encodeURIComponent(curCh),{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({reason})
+    const r=await fetch('/api/request-refill/'+curQ,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})
     });
     const j=await r.json();
-    if(!r.ok){ toast(j.error||'Request failed.','e'); return; }
-    document.getElementById('banRefill').classList.add('visible');
+    if(r.status===403){ toast(j.reason||'Refill locked — months are in the 2-month lock window.','e',5000); return; }
+    if(!r.ok){toast(j.error||'Failed.','e');return;}
+    document.getElementById('banRefill').classList.add('on');
     const rb=document.getElementById('btnRefill');
-    if(rb){ rb.disabled=true; rb.textContent='Refill Requested'; }
-    toast('Refill request sent to admin.');
-  }catch(e){ toast(e.message,'e'); }
-  finally{ spin.hide(); }
+    if(rb){rb.disabled=true;rb.textContent='Refill Requested';}
+    toast('Request sent to admin.');
+  }catch(e){toast(e.message,'e');}
+  finally{spin.hide();}
 }
 
-/* ── Init ─────────────────────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', ()=>{
-  // Auto-load first initiated quarter
-  const firstActive = Object.keys(Q_STATUS).find(q=>Q_STATUS[q].initiated);
-  if(firstActive){
-    curQ=firstActive;
-    document.querySelectorAll('.q-btn').forEach(b=>b.classList.toggle('active',b.id==='qbtn-'+firstActive));
-    loadDRR();
-  } else {
-    setStatus('No active quarters. Admin must initiate a quarter first.');
+/* ── Empty state helper ────────────────────────────────────────── */
+function showEmpty(title,desc){
+  document.getElementById('tableWrap').style.display='none';
+  document.getElementById('emptyState').style.display='';
+  document.getElementById('emptyTitle').textContent=title;
+  document.getElementById('emptyDesc').textContent=desc;
+}
+
+/* ── Floating Calculator ─────────────────────────────────────────
+   Logic: accumulator model with memory (MC/MR/M+/M-)
+   Keyboard support: digits, operators, Enter/=, Backspace, Escape
+ ── */
+let _cExpr='', _cVal='0', _cPendingOp=null, _cPendingVal=null, _cJustEvaled=false, _cMem=0;
+
+function toggleFloatCalc(){
+  const el=document.getElementById('floatCalc');
+  const fab=document.getElementById('calcFab');
+  const visible=el.style.display!=='none';
+  el.style.display=visible?'none':'';
+  fab.style.background=visible?'var(--g700)':'var(--g900)';
+  if(!visible) document.getElementById('calcBody').style.display='';
+}
+
+let _calcMinimised=false;
+function toggleCalcMin(){
+  _calcMinimised=!_calcMinimised;
+  document.getElementById('calcBody').style.display=_calcMinimised?'none':'';
+  document.getElementById('calcMinBtn').textContent=_calcMinimised?'+':'−';
+}
+
+function _cUpdate(){
+  document.getElementById('calcVal').textContent=_cVal;
+  document.getElementById('calcExpr').textContent=_cExpr;
+  document.getElementById('calcMemDisplay').textContent=_cMem!==0?'M: '+_cMem:'';
+}
+
+function calcOp(op){
+  if(op==='C'){
+    _cVal='0';_cExpr='';_cPendingOp=null;_cPendingVal=null;_cJustEvaled=false;
+    _cUpdate(); return;
   }
+  if(op==='⌫'){
+    if(_cJustEvaled){_cVal='0';_cJustEvaled=false;}
+    else _cVal=_cVal.length>1?_cVal.slice(0,-1):'0';
+    _cUpdate(); return;
+  }
+  if(op==='.'){
+    if(_cJustEvaled){_cVal='0';_cJustEvaled=false;}
+    if(!_cVal.includes('.')) _cVal+='.';
+    _cUpdate(); return;
+  }
+  if('0123456789'.includes(op)){
+    if(_cJustEvaled){_cVal=op;_cJustEvaled=false;}
+    else _cVal=(_cVal==='0')?op:_cVal+op;
+    _cUpdate(); return;
+  }
+  if(['+','-','*','/'].includes(op)){
+    if(_cPendingOp && !_cJustEvaled){
+      const res=_cCompute(_cPendingVal,parseFloat(_cVal),_cPendingOp);
+      _cVal=String(res); _cPendingVal=res;
+    } else {
+      _cPendingVal=parseFloat(_cVal);
+    }
+    _cPendingOp=op; _cJustEvaled=false;
+    _cExpr=_cVal+' '+{'+':'+','-':'−','*':'×','/':'÷'}[op];
+    _cUpdate(); return;
+  }
+  if(op==='='){
+    if(_cPendingOp){
+      const res=_cCompute(_cPendingVal,parseFloat(_cVal),_cPendingOp);
+      _cExpr=_cPendingVal+' '+{'+':'+','-':'−','*':'×','/':'÷'}[_cPendingOp]+' '+_cVal+' =';
+      _cVal=String(res);_cPendingOp=null;_cPendingVal=null;_cJustEvaled=true;
+    }
+    _cUpdate(); return;
+  }
+}
+
+function _cCompute(a,b,op){
+  let r;
+  if(op==='+') r=a+b;
+  else if(op==='-') r=a-b;
+  else if(op==='*') r=a*b;
+  else if(op==='/') r=b!==0?a/b:NaN;
+  if(isNaN(r)||!isFinite(r)) return 'Err';
+  // Round to avoid floating point noise
+  return Math.round(r*1e10)/1e10;
+}
+
+function calcMem(op){
+  const v=parseFloat(_cVal)||0;
+  if(op==='MC') _cMem=0;
+  else if(op==='MR'){_cVal=String(_cMem);_cJustEvaled=false;}
+  else if(op==='M+') _cMem+=v;
+  else if(op==='M-') _cMem-=v;
+  _cUpdate();
+}
+
+// Keyboard shortcut for calculator
+document.addEventListener('keydown',e=>{
+  const fc=document.getElementById('floatCalc');
+  if(fc.style.display==='none') return;
+  // Don't intercept when user is typing in forecast inputs
+  if(document.activeElement && document.activeElement.tagName==='INPUT') return;
+  const map={'Enter':'=','Backspace':'⌫','Escape':'C'};
+  const k=map[e.key]||e.key;
+  if('0123456789.+-*/='.includes(k)||k==='C'||k==='⌫'){
+    e.preventDefault(); calcOp(k);
+  }
+});
+
+/* ── Draggable calculator ─────────────────────────────────────── */
+(function(){
+  let dragging=false, offX=0, offY=0;
+  document.addEventListener('DOMContentLoaded',()=>{
+    const bar=document.getElementById('calcDragBar');
+    const fc =document.getElementById('floatCalc');
+    if(!bar||!fc) return;
+    bar.addEventListener('mousedown',e=>{
+      dragging=true;
+      const rect=fc.getBoundingClientRect();
+      offX=e.clientX-rect.left; offY=e.clientY-rect.top;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove',e=>{
+      if(!dragging) return;
+      let nx=e.clientX-offX, ny=e.clientY-offY;
+      const mw=window.innerWidth-fc.offsetWidth;
+      const mh=window.innerHeight-fc.offsetHeight;
+      nx=Math.max(0,Math.min(nx,mw)); ny=Math.max(0,Math.min(ny,mh));
+      fc.style.right='auto'; fc.style.bottom='auto';
+      fc.style.left=nx+'px'; fc.style.top=ny+'px';
+    });
+    document.addEventListener('mouseup',()=>{ dragging=false; });
+  });
+})();
+
+/* ── Init ─────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded',()=>{
+  autoSelectBestQ();
+  startPolling();
 });
 </script>
 </body>

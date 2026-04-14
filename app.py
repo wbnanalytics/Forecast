@@ -1,6 +1,12 @@
 """
 app.py — forecast.wbn | Wellbeing Nutrition
-Quarter-wise, channel-wise DRR forecast tool with filters and DRR prefill.
+v6: 2-month rolling lock, floating calculator, PostgreSQL database layer.
+
+Lock rules:
+  In April  → April & May are locked.  Can only refill June.
+  In May    → May & June are locked.   Can only refill July.
+  Generally → current month AND the immediately following month are locked.
+              Earliest refillable month = current_month + 2.
 """
 import os, io, smtplib, ssl, threading, datetime, json
 from email.mime.multipart import MIMEMultipart
@@ -15,9 +21,23 @@ from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
 import msal
 
-from excel_handler import (
-    CHANNELS, get_sample_products, save_submission_log,
-)
+from excel_handler import (CHANNELS, get_sample_products, save_submission_log)
+
+# ── Optional DB import (graceful fallback to in-memory if not configured) ──
+try:
+    from db import (db_save_submission, db_get_submission, db_get_all_subs_for_quarter,
+                    db_save_quarter, db_get_quarter, db_revoke_quarter,
+                    db_save_log, db_get_log, DB_ENABLED)
+except ImportError:
+    DB_ENABLED = False
+    def db_save_submission(*a, **kw): pass
+    def db_get_submission(*a, **kw): return None
+    def db_get_all_subs_for_quarter(*a, **kw): return {}
+    def db_save_quarter(*a, **kw): pass
+    def db_get_quarter(*a, **kw): return None
+    def db_revoke_quarter(*a, **kw): pass
+    def db_save_log(*a, **kw): pass
+    def db_get_log(*a, **kw): return []
 
 load_dotenv()
 
@@ -50,9 +70,8 @@ ADMINS           = [e.strip().lower() for e in os.getenv("ADMINS","").split(",")
 FORECAST_MEMBERS = [e.strip().lower() for e in os.getenv("FORECAST_MEMBERS","").split(",") if e.strip()]
 
 def _build_channel_map():
-    raw = os.getenv("CHANNEL_MAP", "")
     m = {}
-    for part in raw.split(","):
+    for part in os.getenv("CHANNEL_MAP","").split(","):
         part = part.strip()
         if ":" in part:
             email, ch = part.rsplit(":", 1)
@@ -63,67 +82,118 @@ CHANNEL_MAP = _build_channel_map()
 
 NOTIFY_EMAILS = [e.strip() for e in os.getenv("NOTIFY_EMAILS",
     "nivas@wellbeingnutrition.com,rushikesh.pawar@wellbeingnutrition.com").split(",") if e.strip()]
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_USER = os.getenv("SMTP_USER","")
+SMTP_PASS = os.getenv("SMTP_PASS","")
 
 QUARTERS = {
-    "Q1": {"label":"Q1 (Apr-Jun)", "months":["April","May","June"],           "short":["Apr","May","Jun"]},
-    "Q2": {"label":"Q2 (Jul-Sep)", "months":["July","August","September"],    "short":["Jul","Aug","Sep"]},
-    "Q3": {"label":"Q3 (Oct-Dec)", "months":["October","November","December"],"short":["Oct","Nov","Dec"]},
-    "Q4": {"label":"Q4 (Jan-Mar)", "months":["January","February","March"],   "short":["Jan","Feb","Mar"]},
+    "Q1": {"label":"Q1 (Apr-Jun)","months":["April","May","June"],           "short":["Apr","May","Jun"]},
+    "Q2": {"label":"Q2 (Jul-Sep)","months":["July","August","September"],    "short":["Jul","Aug","Sep"]},
+    "Q3": {"label":"Q3 (Oct-Dec)","months":["October","November","December"],"short":["Oct","Nov","Dec"]},
+    "Q4": {"label":"Q4 (Jan-Mar)","months":["January","February","March"],   "short":["Jan","Feb","Mar"]},
 }
 
 DRR_LABELS = ["7 Days Overall DRR","15 Days Overall DRR","30 Days Overall DRR",
                "45 Days Overall DRR","60 Days Overall DRR"]
 DRR_SHORT  = ["7D","15D","30D","45D","60D"]
-
-BASE_COLS_DRR = ["Category","Sub-Category","Product Type",
-                 "Product Name","SKU","Live/Not Live","Sub Product Type"]
+BASE_COLS_DRR = ["Category","Sub-Category","Product Type","Product Name","SKU","Live/Not Live","Sub Product Type"]
 
 _lock        = threading.Lock()
 _quarters    = {}
 _submissions = {}
 _admin_log   = []
 
+MONTH_NUM = {
+    "January":1,"February":2,"March":3,"April":4,
+    "May":5,"June":6,"July":7,"August":8,"September":9,
+    "October":10,"November":11,"December":12
+}
+
+# ── Submission helpers ────────────────────────────────────────────────────────
+def _sub_key(qkey, email):
+    return qkey + "||" + email.lower()
+
 def _sub_default():
-    return dict(submitted=False, submitted_at="", data=None, user_name="",
-                revision=0, refill_requested=False, refill_reason="",
-                refill_approved=False, excel_bytes=None, file="")
+    return dict(
+        submitted=False, submitted_at="", submitted_at_dt=None,
+        data=None, user_name="", revision=0,
+        refill_requested=False, refill_reason="",
+        refill_cooldown_until=None,
+        excel_bytes=None, file=""
+    )
+
+def _sub_get(qkey, email):
+    k = _sub_key(qkey, email)
+    # Try DB first
+    if DB_ENABLED:
+        db_val = db_get_submission(qkey, email)
+        if db_val:
+            with _lock:
+                _submissions[k] = db_val
+    with _lock:
+        return dict(_submissions.get(k, _sub_default()))
+
+def _sub_set(qkey, email, updates):
+    k = _sub_key(qkey, email)
+    with _lock:
+        if k not in _submissions:
+            _submissions[k] = _sub_default()
+        _submissions[k].update(updates)
+        snap = dict(_submissions[k])
+    if DB_ENABLED:
+        db_save_submission(qkey, email, snap)
+
+def _sub_reset(qkey, email):
+    k = _sub_key(qkey, email)
+    default = _sub_default()
+    with _lock:
+        _submissions[k] = default
+    if DB_ENABLED:
+        db_save_submission(qkey, email, default)
 
 def _q_get(qkey):
-    with _lock: return dict(_quarters.get(qkey, {}))
+    if DB_ENABLED:
+        db_val = db_get_quarter(qkey)
+        if db_val:
+            with _lock:
+                _quarters[qkey] = db_val
+    with _lock:
+        return dict(_quarters.get(qkey, {}))
 
 def _q_set(qkey, data):
-    with _lock: _quarters[qkey] = data
+    with _lock:
+        _quarters[qkey] = data
+    if DB_ENABLED:
+        db_save_quarter(qkey, data)
 
 def _q_revoke(qkey):
     with _lock:
         _quarters.pop(qkey, None)
-        _submissions.pop(qkey, None)
+        for k in [k for k in _submissions if k.startswith(qkey+"||")]:
+            del _submissions[k]
+    if DB_ENABLED:
+        db_revoke_quarter(qkey)
 
-def _sub_get(qkey, channel):
-    with _lock: return dict(_submissions.get(qkey,{}).get(channel, _sub_default()))
-
-def _sub_set(qkey, channel, updates):
+def _all_subs_for_quarter(qkey):
+    if DB_ENABLED:
+        return db_get_all_subs_for_quarter(qkey)
     with _lock:
-        if qkey not in _submissions: _submissions[qkey] = {}
-        if channel not in _submissions[qkey]: _submissions[qkey][channel] = _sub_default()
-        _submissions[qkey][channel].update(updates)
-
-def _sub_reset(qkey, channel):
-    with _lock:
-        if qkey in _submissions and channel in _submissions[qkey]:
-            _submissions[qkey][channel] = _sub_default()
-
-def _all_subs(qkey):
-    with _lock: return {ch: dict(s) for ch, s in _submissions.get(qkey,{}).items()}
+        result = {}
+        for k, v in _submissions.items():
+            if k.startswith(qkey+"||"):
+                email = k.split("||",1)[1]
+                result[email] = dict(v)
+        return result
 
 def _log(action, user, detail=""):
+    entry = dict(
+        timestamp=datetime.datetime.now().strftime("%d %b %Y, %H:%M"),
+        action=action, user=user, detail=detail)
     with _lock:
-        _admin_log.append(dict(
-            timestamp=datetime.datetime.now().strftime("%d %b %Y, %H:%M"),
-            action=action, user=user, detail=detail))
+        _admin_log.append(entry)
+    if DB_ENABLED:
+        db_save_log(entry)
 
+# ── Email ────────────────────────────────────────────────────────────────────
 def _send_email(subject, body, attach_name=None, attach_bytes=None):
     if not SMTP_USER or not SMTP_PASS:
         app.logger.warning("SMTP not configured — email skipped.")
@@ -131,7 +201,8 @@ def _send_email(subject, body, attach_name=None, attach_bytes=None):
     def _work():
         try:
             msg = MIMEMultipart()
-            msg["From"] = SMTP_USER; msg["To"] = ", ".join(NOTIFY_EMAILS)
+            msg["From"] = SMTP_USER
+            msg["To"]   = ", ".join(NOTIFY_EMAILS)
             msg["Subject"] = subject
             msg.attach(MIMEText(body, "plain"))
             if attach_name and attach_bytes:
@@ -144,9 +215,11 @@ def _send_email(subject, body, attach_name=None, attach_bytes=None):
                 srv.ehlo(); srv.starttls(context=ctx); srv.ehlo()
                 srv.login(SMTP_USER, SMTP_PASS)
                 srv.sendmail(SMTP_USER, NOTIFY_EMAILS, msg.as_string())
-        except Exception as e: app.logger.error("Email failed: "+str(e))
+        except Exception as e:
+            app.logger.error("Email failed: "+str(e))
     threading.Thread(target=_work, daemon=True).start()
 
+# ── Auth decorators ──────────────────────────────────────────────────────────
 def _require_login(f):
     @wraps(f)
     def d(*a, **kw):
@@ -168,12 +241,122 @@ def _require_admin(f):
         return f(*a, **kw)
     return d
 
-def _email():  return session["user"].get("preferred_username","").lower().strip()
-def _name():   return session["user"].get("name", _email())
+def _email():    return session["user"].get("preferred_username","").lower().strip()
+def _name():     return session["user"].get("name", _email())
 def _is_admin(): return _email() in ADMINS
-def _user_channel(email): return CHANNEL_MAP.get(email.lower())
 
-# ── Auth ────────────────────────────────────────────────────────────────────────
+# ── 2-Month Rolling Lock Logic ────────────────────────────────────────────────
+def _get_today():
+    """Isolated date function — easy to patch in tests."""
+    return datetime.date.today()
+
+def _refill_allowed_months(qkey):
+    """
+    2-month rolling lock:
+      - Current month is LOCKED (cannot refill).
+      - Next month is also LOCKED (cannot refill).
+      - Only months >= current_month + 2 are available for refill.
+
+    Examples (Q1 = Apr, May, Jun):
+      In April  → April locked, May locked  → only June available
+      In May    → May locked,   June locked  → only July (not in Q1 → empty)
+      In June   → June locked               → nothing (all months exhausted)
+      In March  → nothing locked yet        → April, May, June all available
+
+    Examples (Q2 = Jul, Aug, Sep):
+      In July   → July locked, Aug locked   → only Sep available
+      In August → Aug locked,  Sep locked   → nothing
+    """
+    if qkey not in QUARTERS:
+        return []
+    months = QUARTERS[qkey]["months"]
+    today  = _get_today()
+    cur_month = today.month
+    cur_year  = today.year
+
+    # Lock window: current month AND next month
+    locked_month_nums = set()
+    for delta in (0, 1):
+        mn = cur_month + delta
+        yr = cur_year
+        if mn > 12:
+            mn -= 12
+            yr += 1
+        locked_month_nums.add(mn)
+
+    allowed = []
+    for m in months:
+        mn = MONTH_NUM.get(m, 0)
+        if mn == 0:
+            continue
+        # Resolve year for wrap-around quarters (Q4 spans Jan-Mar)
+        yr = cur_year
+        if mn < cur_month and (cur_month - mn) > 6:
+            yr = cur_year + 1
+
+        # Month must be strictly in the future AND not in the locked window
+        if (yr, mn) > (cur_year, cur_month) and mn not in locked_month_nums:
+            allowed.append(m)
+
+    return allowed
+
+
+def _locked_months_in_quarter(qkey):
+    """
+    Returns list of months in the quarter that are currently locked
+    (current month + next month, but only those that are in the quarter).
+    Used for UI messaging.
+    """
+    if qkey not in QUARTERS:
+        return []
+    months = QUARTERS[qkey]["months"]
+    today  = _get_today()
+    cur_month = today.month
+    cur_year  = today.year
+
+    locked = []
+    for delta in (0, 1):
+        mn = cur_month + delta
+        yr = cur_year
+        if mn > 12:
+            mn -= 12
+            yr += 1
+        for m in months:
+            if MONTH_NUM.get(m, 0) == mn:
+                locked.append(m)
+    return locked
+
+
+def _cooldown_active(sub, qkey=None):
+    """
+    Returns (True, message) if refill is not allowed.
+    Uses 2-month rolling lock logic when qkey provided.
+    """
+    if qkey:
+        allowed = _refill_allowed_months(qkey)
+        locked  = _locked_months_in_quarter(qkey)
+        if not allowed:
+            months = QUARTERS.get(qkey, {}).get("months", [])
+            if locked:
+                return True, ("Months locked: " + ", ".join(locked) +
+                              ". No further months available for refill in this quarter.")
+            return True, ("All months in this quarter have passed — refill is no longer available.")
+        return False, ""
+    # Fallback date-based check
+    until_str = sub.get("refill_cooldown_until")
+    if not until_str:
+        return False, ""
+    try:
+        until = datetime.date.fromisoformat(until_str)
+        today = datetime.date.today()
+        if today < until:
+            days = (until - today).days
+            return True, "Refill locked for " + str(days) + " more day(s)."
+    except Exception:
+        pass
+    return False, ""
+
+# ── Auth routes ───────────────────────────────────────────────────────────────
 @app.route("/")
 def login():
     if session.get("user"): return redirect(url_for("forecast"))
@@ -197,110 +380,148 @@ def authorized():
 @app.route("/logout")
 def logout(): session.clear(); return redirect(url_for("login"))
 
-# ── Forecast page ──────────────────────────────────────────────────────────────
+# ── Forecast page ─────────────────────────────────────────────────────────────
 @app.route("/forecast")
 @_require_login
 def forecast():
     email  = _email(); name = _name()
     is_adm = _is_admin()
-    ch     = _user_channel(email) if not is_adm else None
+
     q_status = {}
     for qkey in QUARTERS:
         q = _q_get(qkey)
         if not q.get("initiated"):
             q_status[qkey] = {"initiated": False}
         else:
-            subs = _all_subs(qkey)
+            sub = _sub_get(qkey, email)
+            cooldown, cmsg = _cooldown_active(sub, qkey)
+            allowed_months = _refill_allowed_months(qkey)
+            locked_months  = _locked_months_in_quarter(qkey)
             q_status[qkey] = {
-                "initiated": True,
+                "initiated":    True,
                 "initiated_at": q.get("initiated_at",""),
-                "sku_count": len(q.get("drr_data") or []),
-                "channels": {c: {
-                    "submitted": subs.get(c,{}).get("submitted",False),
-                    "submitted_at": subs.get(c,{}).get("submitted_at",""),
-                } for c in CHANNELS},
+                "sku_count":    len(q.get("drr_data") or []),
+                "submitted":    sub.get("submitted", False),
+                "submitted_at": sub.get("submitted_at",""),
+                "revision":     sub.get("revision", 0),
+                "refill_requested": sub.get("refill_requested", False),
+                "cooldown_active":  cooldown,
+                "cooldown_msg":     cmsg,
+                "allowed_refill_months": allowed_months,
+                "locked_months":         locked_months,
+                "can_refill":       len(allowed_months) > 0 and sub.get("submitted", False),
             }
+
     return render_template("forecast.html",
         user_name=name, user_email=email,
-        is_admin=is_adm, user_channel=ch,
-        channels=CHANNELS, quarters=QUARTERS,
-        drr_labels=DRR_LABELS, drr_short=DRR_SHORT,
+        is_admin=is_adm,
+        quarters=QUARTERS, drr_labels=DRR_LABELS, drr_short=DRR_SHORT,
         q_status=q_status,
         today=datetime.date.today().strftime("%A, %d %B %Y"),
+        db_enabled=DB_ENABLED,
     )
 
-# ── API: Load DRR data for a quarter/channel ───────────────────────────────────
+# ── API: Quarter status poll ──────────────────────────────────────────────────
+@app.route("/api/quarter-status")
+@_require_login
+def api_quarter_status():
+    email = _email()
+    result = {}
+    for qkey in QUARTERS:
+        q = _q_get(qkey)
+        if not q.get("initiated"):
+            result[qkey] = {"initiated": False}
+        else:
+            sub = _sub_get(qkey, email)
+            cooldown, cmsg = _cooldown_active(sub, qkey)
+            allowed_months = _refill_allowed_months(qkey)
+            locked_months  = _locked_months_in_quarter(qkey)
+            result[qkey] = {
+                "initiated":    True,
+                "initiated_at": q.get("initiated_at",""),
+                "sku_count":    len(q.get("drr_data") or []),
+                "submitted":    sub.get("submitted", False),
+                "submitted_at": sub.get("submitted_at",""),
+                "revision":     sub.get("revision", 0),
+                "refill_requested": sub.get("refill_requested", False),
+                "cooldown_active":  cooldown,
+                "cooldown_msg":     cmsg,
+                "allowed_refill_months": allowed_months,
+                "locked_months":         locked_months,
+                "can_refill":       len(allowed_months) > 0 and sub.get("submitted", False),
+            }
+    return jsonify(result)
+
+# ── API: Load DRR data ─────────────────────────────────────────────────────────
 @app.route("/api/load-drr/<qkey>")
 @_require_login
 def api_load_drr(qkey):
     if qkey not in QUARTERS: return jsonify({"error":"Invalid quarter"}), 400
     q = _q_get(qkey)
-    if not q.get("initiated"): return jsonify({"error":"Quarter not initiated"}), 404
-    email  = _email(); is_adm = _is_admin()
-    ch     = request.args.get("channel") if is_adm else _user_channel(email)
-    if not ch: return jsonify({"error":"No channel assigned"}), 400
+    if not q.get("initiated"): return jsonify({"error":"Quarter not yet initiated by admin"}), 404
+
+    email    = _email(); is_adm = _is_admin()
     drr_data = q.get("drr_data") or []
-    sub      = _sub_get(qkey, ch)
+    sub      = _sub_get(qkey, email)
     saved    = sub.get("data") or {}
+
+    if is_adm:
+        ch_param = request.args.get("channel") or None
+        if ch_param:
+            member_ch = ch_param
+            member_email = next((e for e, c in CHANNEL_MAP.items() if c == ch_param), None)
+            ch_sub = _sub_get(qkey, member_email) if member_email else _sub_default()
+            saved  = ch_sub.get("data") or {}
+            sub    = ch_sub
+        else:
+            member_ch = None
+    else:
+        member_ch = CHANNEL_MAP.get(email)
+        if not member_ch:
+            return jsonify({"error": "You are not assigned to a channel. Contact admin to set CHANNEL_MAP in .env."}), 400
+
+    cooldown, cmsg = _cooldown_active(sub, qkey)
+    allowed_months = _refill_allowed_months(qkey)
+    locked_months  = _locked_months_in_quarter(qkey)
 
     rows = []
     for row in drr_data:
         r = dict(row)
-        # Strip internal _drr blob before sending (we send channel-specific drr separately)
-        drr_for_ch = r.pop("_drr", {}).get(ch, {})
-        row_saved  = saved.get(r.get("_row_id",""), {})
+        drr_all = r.pop("_drr", {})
+        row_saved = saved.get(r.get("_row_id",""), {})
         for m in QUARTERS[qkey]["months"]:
             r[m] = row_saved.get(m, "")
-        # Attach DRR values for this channel as _ref
-        r["_ref"] = {dl: round(drr_for_ch.get(dl, 0), 2) for dl in DRR_LABELS}
+        if member_ch:
+            ch_drr = drr_all.get(member_ch, {})
+            r["_ref"] = {dl: round(ch_drr.get(dl, 0), 2) for dl in DRR_LABELS}
+        else:
+            r["_refs"] = {}
+            for ch in CHANNELS:
+                ch_drr = drr_all.get(ch, {})
+                r["_refs"][ch] = {dl: round(ch_drr.get(dl, 0), 2) for dl in DRR_LABELS}
         rows.append(r)
 
-    # Build filter options from this data
-    cats    = sorted(set(r.get("Category","") for r in rows if r.get("Category")))
+    cats    = sorted(set(r.get("Category","")    for r in rows if r.get("Category")))
     subcats = sorted(set(r.get("Sub-Category","") for r in rows if r.get("Sub-Category")))
     ptypes  = sorted(set(r.get("Product Type","") for r in rows if r.get("Product Type")))
 
     return jsonify({
-        "rows": rows,
-        "months": QUARTERS[qkey]["months"],
-        "drr_labels": DRR_LABELS,
-        "drr_short": DRR_SHORT,
-        "channel": ch,
-        "submitted": sub.get("submitted", False),
-        "submitted_at": sub.get("submitted_at",""),
-        "revision": sub.get("revision", 0),
+        "rows":          rows,
+        "months":        QUARTERS[qkey]["months"],
+        "drr_labels":    DRR_LABELS,
+        "drr_short":     DRR_SHORT,
+        "user_channel":  member_ch,
+        "all_channels":  CHANNELS if not member_ch else None,
+        "submitted":     sub.get("submitted", False),
+        "submitted_at":  sub.get("submitted_at",""),
+        "revision":      sub.get("revision", 0),
         "refill_requested": sub.get("refill_requested", False),
-        "refill_approved": sub.get("refill_approved", False),
-        "filter_options": {
-            "categories": cats,
-            "sub_categories": subcats,
-            "product_types": ptypes,
-        }
-    })
-
-# ── API: Sample data ───────────────────────────────────────────────────────────
-@app.route("/api/sample-data/<qkey>")
-@_require_login
-def api_sample_data(qkey):
-    if qkey not in QUARTERS: return jsonify({"error":"Invalid quarter"}), 400
-    import random; random.seed(42)
-    q = _q_get(qkey)
-    products = q.get("drr_data") or get_sample_products()
-    months   = QUARTERS[qkey]["months"]
-    rows = []
-    for i, p in enumerate(products):
-        row = dict(p)
-        row.pop("_drr", None)
-        row.setdefault("_row_id", "r"+str(i))
-        for m in months: row[m] = ""
-        row["_ref"] = {dl: 0 for dl in DRR_LABELS}
-        rows.append(row)
-    cats    = sorted(set(r.get("Category","") for r in rows if r.get("Category")))
-    subcats = sorted(set(r.get("Sub-Category","") for r in rows if r.get("Sub-Category")))
-    ptypes  = sorted(set(r.get("Product Type","") for r in rows if r.get("Product Type")))
-    return jsonify({
-        "rows": rows, "months": months,
-        "filter_options": {"categories": cats, "sub_categories": subcats, "product_types": ptypes}
+        "cooldown_active":  cooldown,
+        "cooldown_msg":     cmsg,
+        "allowed_refill_months": allowed_months,
+        "locked_months":         locked_months,
+        "can_refill":       len(allowed_months) > 0 and sub.get("submitted", False),
+        "filter_options": {"categories":cats,"sub_categories":subcats,"product_types":ptypes},
     })
 
 # ── API: Save draft ────────────────────────────────────────────────────────────
@@ -308,15 +529,13 @@ def api_sample_data(qkey):
 @_require_login
 def api_save_draft(qkey):
     if qkey not in QUARTERS: return jsonify({"error":"Invalid quarter"}), 400
-    email  = _email(); is_adm = _is_admin()
-    ch     = request.json.get("channel") if is_adm else _user_channel(email)
-    if not ch: return jsonify({"error":"No channel"}), 400
-    sub = _sub_get(qkey, ch)
-    if sub["submitted"] and not sub["refill_approved"]:
-        return jsonify({"error":"Already submitted"}), 409
+    email = _email()
+    sub   = _sub_get(qkey, email)
+    if sub["submitted"]:
+        return jsonify({"error":"Already submitted — cannot save draft"}), 409
     rows = request.json.get("rows",[])
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in QUARTERS[qkey]["months"]} for row in rows}
-    _sub_set(qkey, ch, {"data": data, "user_name": _name()})
+    _sub_set(qkey, email, {"data": data, "user_name": _name()})
     return jsonify({"status":"saved"})
 
 # ── API: Submit ────────────────────────────────────────────────────────────────
@@ -324,52 +543,80 @@ def api_save_draft(qkey):
 @_require_login
 def api_submit(qkey):
     if qkey not in QUARTERS: return jsonify({"error":"Invalid quarter"}), 400
-    email  = _email(); name = _name(); is_adm = _is_admin()
-    ch     = request.json.get("channel") if is_adm else _user_channel(email)
-    if not ch: return jsonify({"error":"No channel"}), 400
-    sub = _sub_get(qkey, ch)
-    if sub["submitted"] and not sub["refill_approved"]:
+    email = _email(); name = _name()
+    sub   = _sub_get(qkey, email)
+
+    if sub["submitted"]:
         return jsonify({"error":"Already submitted","submitted_at":sub["submitted_at"]}), 409
+
     rows = request.json.get("rows",[])
     if not rows: return jsonify({"error":"No data"}), 400
+
     months = QUARTERS[qkey]["months"]
     errors = []
     for row in rows:
         sku = row.get("SKU") or row.get("Product Name","?")
         for m in months:
             v = row.get(m,"")
-            if v == "" or v is None: errors.append("["+sku+"] '"+m+"' is empty.")
+            if v == "" or v is None:
+                errors.append("["+sku+"] '"+m+"' is empty.")
             else:
                 try: float(str(v).replace(",",""))
-                except ValueError: errors.append("["+sku+"] '"+m+"' invalid value.")
+                except ValueError: errors.append("["+sku+"] '"+m+"' invalid.")
     if errors: return jsonify({"error":"Validation failed","details":errors[:10]}), 422
-    data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
-    buf  = io.BytesIO(); _save_channel_excel(rows, name, ch, qkey, buf); buf.seek(0)
-    eb   = buf.read()
-    at   = datetime.datetime.now().strftime("%d %b %Y, %H:%M")
-    rev  = sub["revision"] + 1
-    fn   = ("Forecast_"+qkey+"_"+ch+"_"+datetime.date.today().strftime("%Y_%m_%d")
-            +"_"+name.replace(" ","_")+("_r"+str(rev) if rev>1 else "")+".xlsx")
-    _sub_set(qkey, ch, dict(submitted=True, submitted_at=at, data=data, user_name=name,
-                             revision=rev, refill_requested=False, refill_reason="",
-                             refill_approved=False, excel_bytes=eb, file=fn))
-    try: save_submission_log(name+" ("+ch+")", fn, len(rows), ".")
-    except: pass
-    _log("Submission", name, qkey+"/"+ch+" Rev "+str(rev)+" — "+str(len(rows))+" rows")
-    _send_email(
-        subject="Forecast Submitted — "+name+"/"+ch+"/"+qkey+" — "+datetime.date.today().strftime("%d %b %Y"),
-        body="User: "+name+" ("+email+")\nQuarter: "+qkey+"\nChannel: "+ch+"\nDate: "+at+"\nRows: "+str(len(rows))+"\nRev: "+str(rev)+"\n\n— forecast.wbn",
-        attach_name=fn, attach_bytes=eb)
-    return jsonify({"status":"success","submitted_at":at,"filename":fn,"revision":rev})
 
-# ── API: Download submission ───────────────────────────────────────────────────
-@app.route("/api/download-submission/<qkey>/<channel>")
+    data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
+    buf  = io.BytesIO(); _save_submission_excel(rows, name, qkey, months, buf); buf.seek(0)
+    eb   = buf.read()
+
+    now  = datetime.datetime.now()
+    at   = now.strftime("%d %b %Y, %H:%M")
+    rev  = sub["revision"] + 1
+    fn   = ("Forecast_"+qkey+"_"+datetime.date.today().strftime("%Y_%m_%d")
+            +"_"+name.replace(" ","_")+((("_r"+str(rev)) if rev > 1 else ""))+".xlsx")
+
+    allowed_refill_months = _refill_allowed_months(qkey)
+    locked_months         = _locked_months_in_quarter(qkey)
+    can_refill = len(allowed_refill_months) > 0
+
+    _sub_set(qkey, email, dict(
+        submitted=True, submitted_at=at, submitted_at_dt=now.isoformat(),
+        data=data, user_name=name, revision=rev,
+        refill_requested=False, refill_reason="",
+        refill_cooldown_until=None,
+        excel_bytes=eb, file=fn
+    ))
+
+    try: save_submission_log(name, fn, len(rows), ".")
+    except: pass
+    _log("Submission", name, qkey+" Rev "+str(rev)+" — "+str(len(rows))+" rows")
+
+    lock_note = ""
+    if locked_months:
+        lock_note = "Locked months (cannot refill): " + ", ".join(locked_months) + "\n"
+    refill_note = ("Refill available for: "+", ".join(allowed_refill_months)) if can_refill else "No refill available (all months locked or passed)"
+
+    _send_email(
+        subject="Forecast Submitted — "+name+" / "+qkey+" — "+datetime.date.today().strftime("%d %b %Y"),
+        body=("Submitted by : "+name+" ("+email+")\n"
+              "Quarter      : "+qkey+" — "+QUARTERS[qkey]["label"]+"\n"
+              "Date & Time  : "+at+"\n"
+              "Products     : "+str(len(rows))+"\n"
+              "Revision     : "+str(rev)+"\n"
+              +lock_note+refill_note+"\n\n— forecast.wbn | Wellbeing Nutrition"),
+        attach_name=fn, attach_bytes=eb)
+
+    return jsonify({"status":"success","submitted_at":at,"filename":fn,"revision":rev,
+                    "allowed_refill_months":allowed_refill_months,
+                    "locked_months":locked_months,
+                    "can_refill":can_refill})
+
+# ── API: Download own submission ───────────────────────────────────────────────
+@app.route("/api/download-submission/<qkey>")
 @_require_login
-def api_download_submission(qkey, channel):
-    email = _email(); is_adm = _is_admin()
-    if not is_adm and _user_channel(email) != channel:
-        return jsonify({"error":"Access denied"}), 403
-    sub = _sub_get(qkey, channel)
+def api_download_submission(qkey):
+    email = _email()
+    sub   = _sub_get(qkey, email)
     if not sub.get("submitted"): return jsonify({"error":"No submission"}), 404
     eb = sub.get("excel_bytes")
     if not eb: return jsonify({"error":"File unavailable"}), 404
@@ -378,23 +625,41 @@ def api_download_submission(qkey, channel):
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ── API: Refill request ────────────────────────────────────────────────────────
-@app.route("/api/request-refill/<qkey>/<channel>", methods=["POST"])
+@app.route("/api/request-refill/<qkey>", methods=["POST"])
 @_require_login
-def api_request_refill(qkey, channel):
-    email = _email(); name = _name(); is_adm = _is_admin()
-    if not is_adm and _user_channel(email) != channel:
-        return jsonify({"error":"Access denied"}), 403
-    sub = _sub_get(qkey, channel)
-    if not sub.get("submitted"): return jsonify({"error":"Nothing submitted"}), 400
-    if sub.get("refill_requested") and not sub.get("refill_approved"):
-        return jsonify({"error":"Already requested"}), 409
+def api_request_refill(qkey):
+    email = _email(); name = _name()
+    sub   = _sub_get(qkey, email)
+
+    if not sub.get("submitted"):
+        return jsonify({"error":"Nothing submitted yet"}), 400
+
+    cooldown, msg = _cooldown_active(sub, qkey)
+    if cooldown:
+        return jsonify({"error": "Refill not available", "reason": msg}), 403
+
+    allowed_months = _refill_allowed_months(qkey)
+    if not allowed_months:
+        locked = _locked_months_in_quarter(qkey)
+        reason = "All months are locked ("+", ".join(locked)+") or have passed." if locked else "No months left to refill."
+        return jsonify({"error": "Refill not available", "reason": reason}), 403
+
+    if sub.get("refill_requested"):
+        return jsonify({"error":"Refill already requested — awaiting admin approval"}), 409
+
     reason = (request.json or {}).get("reason","").strip()
     if not reason: return jsonify({"error":"Please provide a reason"}), 400
-    _sub_set(qkey, channel, {"refill_requested":True,"refill_reason":reason,"refill_approved":False})
-    _log("Refill Request", name, qkey+"/"+channel+" — "+reason)
-    _send_email(subject="Refill Request — "+name+"/"+channel+"/"+qkey,
-                body=name+" ("+email+") requests refill for "+qkey+"/"+channel+".\nReason: "+reason+"\n\n— forecast.wbn")
-    return jsonify({"status":"requested"})
+
+    _sub_set(qkey, email, {"refill_requested":True, "refill_reason":reason})
+    _log("Refill Request", name, qkey+" — "+reason)
+    _send_email(
+        subject="Refill Request — "+name+" / "+qkey,
+        body=(name+" ("+email+") has requested a forecast refill.\n\n"
+              "Quarter        : "+qkey+" — "+QUARTERS[qkey]["label"]+"\n"
+              "Reason         : "+reason+"\n"
+              "Refillable for : "+", ".join(allowed_months)+"\n\n"
+              "Log in to the Admin Panel to approve or deny.\n\n— forecast.wbn"))
+    return jsonify({"status":"requested", "allowed_months": allowed_months})
 
 # ── API: Download template ─────────────────────────────────────────────────────
 @app.route("/api/download-template/<qkey>")
@@ -405,52 +670,60 @@ def api_download_template(qkey):
     return send_file(buf, as_attachment=True, download_name="Forecast_Template_"+qkey+".xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# ── API: Upload filled template ────────────────────────────────────────────────
-@app.route("/api/upload-template/<qkey>", methods=["POST"])
-@_require_login
-def api_upload_template(qkey):
-    if qkey not in QUARTERS: return jsonify({"error":"Invalid quarter"}), 400
-    if "file" not in request.files: return jsonify({"error":"No file"}), 400
-    f = request.files["file"]
-    if not f.filename.endswith((".xlsx",".xls")): return jsonify({"error":"Only .xlsx/.xls"}), 400
-    try:
-        rows = _load_quarter_template(qkey, io.BytesIO(f.read()))
-        return jsonify({"rows":rows,"months":QUARTERS[qkey]["months"]})
-    except Exception as e: return jsonify({"error":str(e)}), 400
-
 # ── Admin panel ────────────────────────────────────────────────────────────────
 @app.route("/admin")
 @_require_admin
 def admin_panel():
-    with _lock: log = list(reversed(_admin_log[-50:]))
+    if DB_ENABLED:
+        log = list(reversed(db_get_log(50)))
+    else:
+        with _lock: log = list(reversed(_admin_log[-50:]))
+
     q_info = {}
     for qkey, qmeta in QUARTERS.items():
-        q = _q_get(qkey); subs = _all_subs(qkey) if q.get("initiated") else {}
+        q    = _q_get(qkey)
+        subs = _all_subs_for_quarter(qkey) if q.get("initiated") else {}
+        all_members = list(set(ADMINS + FORECAST_MEMBERS))
+        submitted_count  = sum(1 for s in subs.values() if s.get("submitted"))
+        pending_refills  = sum(1 for s in subs.values() if s.get("refill_requested"))
+        member_rows = []
+        for m_email in sorted(all_members):
+            if m_email in ADMINS: continue
+            s = subs.get(m_email, _sub_default())
+            cooldown, cmsg = _cooldown_active(s, qkey)
+            am = _refill_allowed_months(qkey)
+            lm = _locked_months_in_quarter(qkey)
+            member_rows.append({
+                "email":        m_email,
+                "user_name":    s.get("user_name", m_email.split("@")[0]),
+                "submitted":    s.get("submitted", False),
+                "submitted_at": s.get("submitted_at",""),
+                "revision":     s.get("revision", 0),
+                "refill_requested":      s.get("refill_requested", False),
+                "refill_reason":         s.get("refill_reason",""),
+                "cooldown_active":       cooldown,
+                "cooldown_msg":          cmsg,
+                "allowed_refill_months": am,
+                "locked_months":         lm,
+                "can_refill":            len(am) > 0 and s.get("submitted", False),
+            })
         q_info[qkey] = {
-            "label": qmeta["label"], "initiated": q.get("initiated",False),
-            "initiated_at": q.get("initiated_at",""), "sku_count": len(q.get("drr_data") or []),
-            "submitted_count": sum(1 for s in subs.values() if s.get("submitted")),
-            "refill_count": sum(1 for s in subs.values() if s.get("refill_requested") and not s.get("refill_approved")),
-            "channels": {c: {
-                "submitted": subs.get(c,{}).get("submitted",False),
-                "submitted_at": subs.get(c,{}).get("submitted_at",""),
-                "revision": subs.get(c,{}).get("revision",0),
-                "user_name": subs.get(c,{}).get("user_name",""),
-                "refill_requested": subs.get(c,{}).get("refill_requested",False),
-                "refill_reason": subs.get(c,{}).get("refill_reason",""),
-            } for c in CHANNELS},
+            "label":           qmeta["label"],
+            "initiated":       q.get("initiated", False),
+            "initiated_at":    q.get("initiated_at",""),
+            "sku_count":       len(q.get("drr_data") or []),
+            "submitted_count": submitted_count,
+            "pending_refills": pending_refills,
+            "total_members":   len(member_rows),
+            "members":         member_rows,
         }
-    with _lock:
-        all_subs_flat = []
-        for qk, chs in _submissions.items():
-            for ch, s in chs.items():
-                all_subs_flat.append(dict(qkey=qk, channel=ch, **s))
+    total_submitted = sum(q["submitted_count"] for q in q_info.values())
+    pending_refills = sum(q["pending_refills"] for q in q_info.values())
     return render_template("admin.html",
         user_name=_name(), today=datetime.date.today().strftime("%A, %d %B %Y"),
-        quarters=QUARTERS, q_info=q_info, channels=CHANNELS,
-        total_submitted=sum(1 for s in all_subs_flat if s.get("submitted")),
-        pending_refills=sum(1 for s in all_subs_flat if s.get("refill_requested") and not s.get("refill_approved")),
-        activity_log=log)
+        quarters=QUARTERS, q_info=q_info,
+        total_submitted=total_submitted, pending_refills=pending_refills,
+        activity_log=log, db_enabled=DB_ENABLED)
 
 @app.route("/admin/api/initiate-quarter", methods=["POST"])
 @_require_admin
@@ -464,7 +737,7 @@ def admin_initiate_quarter():
     except Exception as e: return jsonify({"error":str(e)}), 400
     _q_set(qkey, {"initiated":True, "initiated_at":datetime.date.today().strftime("%d %b %Y"),
                    "drr_data":drr_data, "channels_found":channels_found})
-    _log("Quarter Initiated", _name(), qkey+" — "+str(len(drr_data))+" SKUs")
+    _log("Quarter Initiated", _name(), qkey+" — "+str(len(drr_data))+" SKUs — visible to all members")
     return jsonify({"status":"ok","sku_count":len(drr_data),"channels_found":channels_found})
 
 @app.route("/admin/api/revoke-quarter", methods=["POST"])
@@ -475,42 +748,46 @@ def admin_revoke_quarter():
     _q_revoke(qkey); _log("Quarter Revoked", _name(), qkey)
     return jsonify({"status":"ok"})
 
-@app.route("/admin/api/reset-submission", methods=["POST"])
-@_require_admin
-def admin_reset_submission():
-    data = request.json or {}
-    qkey = data.get("quarter",""); channel = data.get("channel","")
-    if qkey not in QUARTERS or channel not in CHANNELS: return jsonify({"error":"Invalid"}), 400
-    _sub_reset(qkey, channel); _log("Submission Reset", _name(), qkey+"/"+channel)
-    return jsonify({"status":"ok"})
-
 @app.route("/admin/api/approve-refill", methods=["POST"])
 @_require_admin
 def admin_approve_refill():
-    data = request.json or {}; qkey = data.get("quarter",""); channel = data.get("channel","")
-    sub = _sub_get(qkey, channel)
-    if not sub.get("refill_requested"): return jsonify({"error":"No pending request"}), 400
-    _sub_set(qkey, channel, {"submitted":False,"refill_approved":True,"refill_requested":False})
-    _log("Refill Approved", _name(), qkey+"/"+channel)
+    data  = request.json or {}
+    qkey  = data.get("quarter","")
+    email = data.get("email","").lower().strip()
+    sub   = _sub_get(qkey, email)
+    if not sub.get("refill_requested"):
+        return jsonify({"error":"No pending request"}), 400
+    _sub_set(qkey, email, {
+        "submitted":       False,
+        "refill_requested":False,
+        "refill_reason":   "",
+        "refill_cooldown_until": None,
+    })
+    _log("Refill Approved", _name(), qkey+" for "+email)
     return jsonify({"status":"approved"})
 
 @app.route("/admin/api/deny-refill", methods=["POST"])
 @_require_admin
 def admin_deny_refill():
-    data = request.json or {}; qkey = data.get("quarter",""); channel = data.get("channel","")
-    _sub_set(qkey, channel, {"refill_requested":False,"refill_reason":"","refill_approved":False})
-    _log("Refill Denied", _name(), qkey+"/"+channel)
+    data  = request.json or {}
+    qkey  = data.get("quarter","")
+    email = data.get("email","").lower().strip()
+    _sub_set(qkey, email, {"refill_requested":False,"refill_reason":""})
+    _log("Refill Denied", _name(), qkey+" for "+email)
     return jsonify({"status":"denied"})
 
-@app.route("/admin/api/force-submit", methods=["POST"])
+@app.route("/admin/api/force-unlock", methods=["POST"])
 @_require_admin
-def admin_force_submit():
-    data = request.json or {}; qkey = data.get("quarter",""); channel = data.get("channel","")
-    if qkey not in QUARTERS or channel not in CHANNELS: return jsonify({"error":"Invalid"}), 400
-    at = datetime.datetime.now().strftime("%d %b %Y, %H:%M")
-    _sub_set(qkey, channel, {"submitted":True,"submitted_at":at,"user_name":"Admin ("+_name()+")","revision":1})
-    _log("Force Submit", _name(), qkey+"/"+channel)
-    return jsonify({"status":"ok","submitted_at":at})
+def admin_force_unlock():
+    data  = request.json or {}
+    qkey  = data.get("quarter","")
+    email = data.get("email","").lower().strip()
+    _sub_set(qkey, email, {
+        "submitted":False, "refill_requested":False,
+        "refill_cooldown_until":None,
+    })
+    _log("Force Unlock", _name(), qkey+" for "+email)
+    return jsonify({"status":"unlocked"})
 
 @app.route("/admin/api/export-quarter/<qkey>")
 @_require_admin
@@ -523,10 +800,11 @@ def admin_export_quarter(qkey):
     return send_file(buf, as_attachment=True, download_name=fn,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-@app.route("/admin/api/download-submission/<qkey>/<channel>")
+@app.route("/admin/api/download-member-submission/<qkey>/<path:email>")
 @_require_admin
-def admin_download_sub(qkey, channel):
-    sub = _sub_get(qkey, channel); eb = sub.get("excel_bytes")
+def admin_download_member(qkey, email):
+    sub = _sub_get(qkey, email.lower())
+    eb  = sub.get("excel_bytes")
     if not eb: return jsonify({"error":"No file"}), 404
     buf = io.BytesIO(eb); buf.seek(0)
     return send_file(buf, as_attachment=True, download_name=sub.get("file","submission.xlsx"),
@@ -534,61 +812,42 @@ def admin_download_sub(qkey, channel):
 
 # ── Excel helpers ──────────────────────────────────────────────────────────────
 def _parse_drr_excel(source):
-    """
-    Parse the channel-wise DRR Excel (2-row header format).
-    Row 1: channel names (merged across 5 DRR columns each)
-    Row 2: column labels (Category, SKU, etc. + DRR label names)
-    Returns: (list of row dicts with _drr embedded, list of channels found)
-    """
     import openpyxl
     wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
     ws = wb.active
     all_rows = list(ws.iter_rows(values_only=True))
     if len(all_rows) < 3:
         raise ValueError("Sheet too small — need 2 header rows + data.")
-
     h0 = [str(c or "").strip() for c in all_rows[0]]
     h1 = [str(c or "").strip() for c in all_rows[1]]
-
-    # Map base column names to indices
     base_idx = {}
     for col in BASE_COLS_DRR:
         try: base_idx[col] = h1.index(col)
         except ValueError: pass
-
-    # Build column map: col_index -> {ch, label}
-    col_map = {}
-    cur_ch  = None
+    col_map = {}; cur_ch = None
     for c, cv in enumerate(h0):
         if cv: cur_ch = cv
         lbl = h1[c] if c < len(h1) else ""
         if lbl in DRR_LABELS and cur_ch:
-            col_map[c] = {"ch": cur_ch, "label": lbl}
-
+            col_map[c] = {"ch":cur_ch,"label":lbl}
     rows = []
     for ri, raw in enumerate(all_rows[2:], start=2):
         row_str = [str(c or "").strip() for c in raw]
-        sku  = row_str[base_idx["SKU"]] if "SKU" in base_idx and base_idx["SKU"] < len(row_str) else ""
-        name = row_str[base_idx["Product Name"]] if "Product Name" in base_idx and base_idx["Product Name"] < len(row_str) else ""
-        if not sku and not name:
-            continue
-
-        obj = {"_row_id": "r"+str(ri)}
+        sku  = row_str[base_idx["SKU"]] if "SKU" in base_idx and base_idx["SKU"]<len(row_str) else ""
+        name = row_str[base_idx["Product Name"]] if "Product Name" in base_idx and base_idx["Product Name"]<len(row_str) else ""
+        if not sku and not name: continue
+        obj = {"_row_id":"r"+str(ri)}
         for col in BASE_COLS_DRR:
-            obj[col] = row_str[base_idx[col]] if col in base_idx and base_idx[col] < len(row_str) else ""
-
+            obj[col] = row_str[base_idx[col]] if col in base_idx and base_idx[col]<len(row_str) else ""
         obj["_drr"] = {}
         for c, info in col_map.items():
             ch_name = info["ch"]
-            if ch_name not in obj["_drr"]:
-                obj["_drr"][ch_name] = {}
+            if ch_name not in obj["_drr"]: obj["_drr"][ch_name] = {}
             try:
                 val = raw[c] if c < len(raw) else None
-                obj["_drr"][ch_name][info["label"]] = round(float(val or 0), 2)
-            except (TypeError, ValueError):
-                obj["_drr"][ch_name][info["label"]] = 0.0
+                obj["_drr"][ch_name][info["label"]] = round(float(val or 0),2)
+            except: obj["_drr"][ch_name][info["label"]] = 0.0
         rows.append(obj)
-
     channels_found = list({info["ch"] for info in col_map.values()})
     return rows, channels_found
 
@@ -597,138 +856,265 @@ def _create_quarter_template(qkey, dest):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
     months = QUARTERS[qkey]["months"]
-    bdr = Border(**{s: Side(style="thin", color="CCCCCC") for s in ["left","right","top","bottom"]})
-    wb = Workbook(); ws = wb.active; ws.title = "Forecast "+qkey
-    headers = ["Category","Sub-Category","Product Type","Product Name","SKU"] + months
-    for ci, h in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=ci, value=h)
+    bdr = Border(**{s:Side(style="thin",color="CCCCCC") for s in ["left","right","top","bottom"]})
+    wb = Workbook(); ws = wb.active; ws.title="Forecast "+qkey
+    headers = ["Category","Sub-Category","Product Type","Product Name","SKU"]+months
+    for ci, h in enumerate(headers,1):
+        cell = ws.cell(row=1,column=ci,value=h)
+        cell.font = Font(bold=True,color="FFFFFF",name="Calibri",size=10)
+        cell.fill = PatternFill(start_color="1B4332",end_color="1B4332",fill_type="solid")
+        cell.alignment = Alignment(horizontal="center",vertical="center"); cell.border=bdr
+    ws.column_dimensions["A"].width=18; ws.column_dimensions["B"].width=18
+    ws.column_dimensions["C"].width=18; ws.column_dimensions["D"].width=28
+    ws.column_dimensions["E"].width=16
+    for i in range(6,len(headers)+1): ws.column_dimensions[get_column_letter(i)].width=14
+    ws.row_dimensions[1].height=30; ws.freeze_panes="F2"; wb.save(dest)
+
+def _save_submission_excel(rows, username, qkey, months, dest):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    bdr = Border(**{s:Side(style="thin",color="DEE2E6") for s in ["left","right","top","bottom"]})
+    wb = Workbook(); ws = wb.active; ws.title="Forecast Submission"
+    total_cols = len(BASE_COLS_DRR)+len(DRR_LABELS)+len(months)
+    ws.merge_cells(start_row=1,start_column=1,end_row=1,end_column=total_cols)
+    tc = ws.cell(row=1,column=1,
+                 value="Forecast — "+qkey+" — "+username+" — "+datetime.date.today().strftime("%d %b %Y"))
+    tc.font=Font(bold=True,color="FFFFFF",name="Calibri",size=12)
+    tc.fill=PatternFill(start_color="1B4332",end_color="1B4332",fill_type="solid")
+    tc.alignment=Alignment(horizontal="left",vertical="center",indent=1)
+    ws.row_dimensions[1].height=28
+    headers=BASE_COLS_DRR+DRR_LABELS+months
+    for ci,h in enumerate(headers,1):
+        cell=ws.cell(row=2,column=ci,value=h)
+        cell.font=Font(bold=True,color="FFFFFF",name="Calibri",size=9)
+        is_drr=(ci>len(BASE_COLS_DRR) and ci<=len(BASE_COLS_DRR)+len(DRR_LABELS))
+        is_month=(ci>len(BASE_COLS_DRR)+len(DRR_LABELS))
+        bg="2D6A4F" if is_drr else ("40916C" if is_month else "1B4332")
+        cell.fill=PatternFill(start_color=bg,end_color=bg,fill_type="solid")
+        cell.alignment=Alignment(horizontal="center",vertical="center"); cell.border=bdr
+    ws.row_dimensions[2].height=28
+    for ri,row in enumerate(rows,3):
+        even=ri%2==0
+        ref = row.get("_ref") or row.get("_refs",{}).get(CHANNELS[0],{}) or {}
+        all_vals=(
+            [row.get(h,"") for h in BASE_COLS_DRR]+
+            [ref.get(dl,"") for dl in DRR_LABELS]+
+            [row.get(m,"") for m in months]
+        )
+        for ci,val in enumerate(all_vals,1):
+            cell=ws.cell(row=ri,column=ci,value=val)
+            cell.alignment=Alignment(horizontal="center",vertical="center"); cell.border=bdr
+            is_drr=(ci>len(BASE_COLS_DRR) and ci<=len(BASE_COLS_DRR)+len(DRR_LABELS))
+            is_month=(ci>len(BASE_COLS_DRR)+len(DRR_LABELS))
+            if ci<=len(BASE_COLS_DRR): bg="D8F3DC"
+            elif is_drr: bg="E0E7FF" if even else "EEF2FF"
+            else: bg="DCFCE7" if even else "F0FFF4"
+            cell.fill=PatternFill(start_color=bg,end_color=bg,fill_type="solid")
+            cell.font=Font(name="Calibri",size=9)
+        ws.row_dimensions[ri].height=18
+    for ci in range(1,len(BASE_COLS_DRR)+1): ws.column_dimensions[get_column_letter(ci)].width=16
+    for ci in range(len(BASE_COLS_DRR)+1,len(BASE_COLS_DRR)+len(DRR_LABELS)+1): ws.column_dimensions[get_column_letter(ci)].width=14
+    for ci in range(len(BASE_COLS_DRR)+len(DRR_LABELS)+1,len(headers)+1): ws.column_dimensions[get_column_letter(ci)].width=14
+    ws.freeze_panes=get_column_letter(len(BASE_COLS_DRR)+1)+"3"; wb.save(dest)
+
+def _export_quarter_excel(qkey, q, dest):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    months   = QUARTERS[qkey]["months"]
+    drr_data = q.get("drr_data") or []
+    all_subs = _all_subs_for_quarter(qkey)
+    all_members = [e for e in sorted(set(FORECAST_MEMBERS)) if e not in ADMINS]
+    bdr = Border(**{s: Side(style="thin", color="DEE2E6") for s in ["left","right","top","bottom"]})
+    wb  = Workbook()
+    ws_sum = wb.active; ws_sum.title = "Summary"
+    sum_headers = ["Channel / Member","Email","Status","Submitted At","Revision","Locked Months"]
+    for ci, h in enumerate(sum_headers, 1):
+        cell = ws_sum.cell(row=1, column=ci, value=h)
         cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
         cell.fill = PatternFill(start_color="1B4332", end_color="1B4332", fill_type="solid")
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = bdr
-    ws.column_dimensions["A"].width = 18
-    ws.column_dimensions["B"].width = 18
-    ws.column_dimensions["C"].width = 18
-    ws.column_dimensions["D"].width = 28
-    ws.column_dimensions["E"].width = 16
-    for i in range(6, len(headers)+1):
-        ws.column_dimensions[get_column_letter(i)].width = 14
-    ws.row_dimensions[1].height = 30
-    ws.freeze_panes = "F2"
-    wb.save(dest)
-
-def _load_quarter_template(qkey, source):
-    import openpyxl
-    months = QUARTERS[qkey]["months"]
-    wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
-    ws = wb.active
-    all_rows = list(ws.iter_rows(values_only=True))
-    if len(all_rows) < 2: raise ValueError("Template appears empty.")
-    h = [str(c or "").strip() for c in all_rows[0]]
-    rows = []
-    for ri, raw in enumerate(all_rows[1:], start=1):
-        row = {h[ci]: (str(c).strip() if c is not None else "") for ci, c in enumerate(raw) if ci < len(h)}
-        sku = row.get("SKU","") or row.get("Product Name","")
-        if not sku: continue
-        row["_row_id"] = "r"+str(ri)
-        row["_ref"]    = {dl: 0 for dl in DRR_LABELS}
-        for m in months: row.setdefault(m, "")
-        rows.append(row)
-    return rows
-
-def _save_channel_excel(rows, username, channel, qkey, dest):
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
-    months = QUARTERS[qkey]["months"]
-    bdr = Border(**{s: Side(style="thin", color="DEE2E6") for s in ["left","right","top","bottom"]})
-    wb = Workbook(); ws = wb.active; ws.title = "Forecast Submission"
-
-    # Title row
-    total_cols = len(BASE_COLS_DRR) + len(DRR_LABELS) + len(months)
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
-    tc = ws.cell(row=1, column=1,
-                 value="Forecast — "+qkey+" — "+channel+" — "+username+" — "+datetime.date.today().strftime("%d %b %Y"))
-    tc.font = Font(bold=True, color="FFFFFF", name="Calibri", size=12)
-    tc.fill = PatternFill(start_color="1B4332", end_color="1B4332", fill_type="solid")
-    tc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-    ws.row_dimensions[1].height = 28
-
-    # Header
-    headers = BASE_COLS_DRR + DRR_LABELS + months
-    for ci, h in enumerate(headers, 1):
-        cell = ws.cell(row=2, column=ci, value=h)
-        cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=9)
-        is_drr   = ci > len(BASE_COLS_DRR) and ci <= len(BASE_COLS_DRR)+len(DRR_LABELS)
-        is_month = ci > len(BASE_COLS_DRR)+len(DRR_LABELS)
-        bg = "2D6A4F" if is_drr else ("40916C" if is_month else "1B4332")
+    ws_sum.row_dimensions[1].height = 26
+    ri = 2
+    locked_months = _locked_months_in_quarter(qkey)
+    for m_email in all_members:
+        sub = all_subs.get(m_email, _sub_default())
+        ch  = CHANNEL_MAP.get(m_email, "Unassigned")
+        row = [ch, sub.get("user_name", m_email), m_email,
+               "Submitted" if sub.get("submitted") else "Pending",
+               sub.get("submitted_at",""), sub.get("revision",0),
+               ", ".join(locked_months)]
+        for ci, v in enumerate(row[:len(sum_headers)], 1):
+            cell = ws_sum.cell(row=ri, column=ci, value=v)
+            cell.border = bdr
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ri += 1
+    for ci, w in enumerate([18,28,32,14,20,8,18], 1):
+        ws_sum.column_dimensions[get_column_letter(ci)].width = w
+    ws = wb.create_sheet("All Submissions")
+    prod_cols  = BASE_COLS_DRR
+    drr_ch_cols = []
+    for ch in CHANNELS:
+        for dl in DRR_SHORT:
+            drr_ch_cols.append(ch+" "+dl)
+    meta_cols   = ["Member Name","Channel","Submitted At"]
+    month_cols  = months
+    all_headers = prod_cols + drr_ch_cols + meta_cols + month_cols
+    col = 1
+    def merged_header(ws, r, c, span, text, bg):
+        if span > 1:
+            ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c+span-1)
+        cell = ws.cell(row=r, column=c, value=text)
+        cell.font = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
         cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = bdr
-    ws.row_dimensions[2].height = 28
-
-    for ri, row in enumerate(rows, 3):
-        even = ri % 2 == 0
-        ref  = row.get("_ref", {})
-        all_vals = (
-            [row.get(h,"") for h in BASE_COLS_DRR] +
-            [ref.get(dl,"") for dl in DRR_LABELS] +
-            [row.get(m,"") for m in months]
-        )
-        for ci, val in enumerate(all_vals, 1):
-            cell = ws.cell(row=ri, column=ci, value=val)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = bdr
-            is_drr   = ci > len(BASE_COLS_DRR) and ci <= len(BASE_COLS_DRR)+len(DRR_LABELS)
-            is_month = ci > len(BASE_COLS_DRR)+len(DRR_LABELS)
-            if ci <= len(BASE_COLS_DRR):
-                bg = "D8F3DC"
-            elif is_drr:
-                bg = "E0E7FF" if even else "EEF2FF"
-            else:
-                bg = "DCFCE7" if even else "F0FFF4"
-            cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-            cell.font = Font(name="Calibri", size=9)
-        ws.row_dimensions[ri].height = 18
-
-    for ci in range(1, len(BASE_COLS_DRR)+1):
+    merged_header(ws, 1, 1,               len(prod_cols),   "PRODUCT INFO",    "1B4332")
+    merged_header(ws, 1, 1+len(prod_cols),len(drr_ch_cols), "HISTORICAL DRR",  "3730A3")
+    merged_header(ws, 1, 1+len(prod_cols)+len(drr_ch_cols), len(meta_cols), "SUBMISSION", "2D6A4F")
+    merged_header(ws, 1, 1+len(prod_cols)+len(drr_ch_cols)+len(meta_cols), len(month_cols), "FORECAST", "40916C")
+    ws.row_dimensions[1].height = 24
+    BG_PROD = "D8F3DC"; BG_DRR = "E0E7FF"; BG_META = "B7E4C7"; BG_MON = "DCFCE7"
+    ch_color_map = {ch: bg for ch, bg in zip(CHANNELS,
+        ["EEF2FF","DBEAFE","F3EEFF","FEF9C3","FDF2F8","FFF7ED","ECFEFF"])}
+    for ci, h in enumerate(all_headers, 1):
+        cell = ws.cell(row=2, column=ci, value=h)
+        cell.font = Font(bold=True, name="Calibri", size=9,
+                         color="1B4332" if ci <= len(prod_cols) else "374151")
+        if ci <= len(prod_cols): bg = BG_PROD
+        elif ci <= len(prod_cols)+len(drr_ch_cols):
+            ch_idx = (ci - len(prod_cols) - 1) // len(DRR_SHORT)
+            bg = ch_color_map.get(CHANNELS[ch_idx] if ch_idx < len(CHANNELS) else "", BG_DRR)
+        elif ci <= len(prod_cols)+len(drr_ch_cols)+len(meta_cols): bg = BG_META
+        else: bg = BG_MON
+        cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = bdr
+    ws.row_dimensions[2].height = 32
+    data_ri = 3
+    for m_email in all_members:
+        sub   = all_subs.get(m_email, _sub_default())
+        saved = sub.get("data") or {}
+        ch    = CHANNEL_MAP.get(m_email, "Unassigned")
+        m_name= sub.get("user_name", m_email.split("@")[0])
+        submitted_at = sub.get("submitted_at","")
+        even  = data_ri % 2 == 0
+        for prod in drr_data:
+            rid    = prod.get("_row_id","")
+            drr_all= prod.get("_drr", {})
+            f_vals = saved.get(rid, {})
+            row_vals = [prod.get(c,"") for c in prod_cols]
+            for pch in CHANNELS:
+                ch_drr = drr_all.get(pch, {})
+                for dl in DRR_LABELS:
+                    v = ch_drr.get(dl, "")
+                    row_vals.append(round(float(v),2) if v else "")
+            row_vals += [m_name, ch, submitted_at]
+            for m in months:
+                row_vals.append(f_vals.get(m,""))
+            for ci, val in enumerate(row_vals, 1):
+                cell = ws.cell(row=data_ri, column=ci, value=val)
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border = bdr
+                cell.font = Font(name="Calibri", size=9)
+                if ci <= len(prod_cols): bg = BG_PROD if even else "E8F5EC"
+                elif ci <= len(prod_cols)+len(drr_ch_cols):
+                    ch_idx = (ci - len(prod_cols) - 1) // len(DRR_SHORT)
+                    base   = ch_color_map.get(CHANNELS[ch_idx] if ch_idx < len(CHANNELS) else "", BG_DRR)
+                    bg     = base if even else "F5F3FF"
+                elif ci <= len(prod_cols)+len(drr_ch_cols)+len(meta_cols):
+                    bg = BG_META if even else "D8F3DC"
+                else:
+                    bg = BG_MON if even else "F0FFF4"
+                    if val == "" and sub.get("submitted"):
+                        bg = "FEE2E2"
+                cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+            ws.row_dimensions[data_ri].height = 18
+            data_ri += 1
+    for ci in range(1, len(prod_cols)+1):
         ws.column_dimensions[get_column_letter(ci)].width = 16
-    for ci in range(len(BASE_COLS_DRR)+1, len(BASE_COLS_DRR)+len(DRR_LABELS)+1):
+    for ci in range(len(prod_cols)+1, len(prod_cols)+len(drr_ch_cols)+1):
+        ws.column_dimensions[get_column_letter(ci)].width = 9
+    for ci in range(len(prod_cols)+len(drr_ch_cols)+1, len(prod_cols)+len(drr_ch_cols)+len(meta_cols)+1):
+        ws.column_dimensions[get_column_letter(ci)].width = 18
+    for ci in range(len(prod_cols)+len(drr_ch_cols)+len(meta_cols)+1, len(all_headers)+1):
         ws.column_dimensions[get_column_letter(ci)].width = 14
-    for ci in range(len(BASE_COLS_DRR)+len(DRR_LABELS)+1, len(headers)+1):
-        ws.column_dimensions[get_column_letter(ci)].width = 14
-
-    ws.freeze_panes = get_column_letter(len(BASE_COLS_DRR)+1)+"3"
+    ws.freeze_panes = get_column_letter(len(prod_cols)+1)+"3"
     wb.save(dest)
 
-def _export_quarter_excel(qkey, q, dest):
-    from openpyxl import Workbook
-    months   = QUARTERS[qkey]["months"]
-    drr_data = q.get("drr_data") or []
-    wb = Workbook(); ws_sum = wb.active; ws_sum.title = "Summary"
-    ws_sum.append(["Quarter", qkey, QUARTERS[qkey]["label"]])
-    ws_sum.append(["Exported", datetime.date.today().isoformat()])
-    ws_sum.append([])
-    ws_sum.append(["Channel","Status","User","Submitted At","Revision"])
-    for ch in CHANNELS:
-        sub = _sub_get(qkey, ch)
-        ws_sum.append([ch, "Submitted" if sub.get("submitted") else "Pending",
-                        sub.get("user_name",""), sub.get("submitted_at",""), sub.get("revision",0)])
-    for ch in CHANNELS:
-        sub = _sub_get(qkey, ch); saved = sub.get("data") or {}
-        ws = wb.create_sheet(ch[:31])
-        ws.append(["Product Name","SKU","Category","Sub-Category"]+DRR_LABELS+months)
+# ── Insights dashboard ────────────────────────────────────────────────────────
+@app.route("/insights")
+@_require_admin
+def insights():
+    return render_template("insights.html",
+        user_name=_name(),
+        today=datetime.date.today().strftime("%A, %d %B %Y"),
+        quarters=QUARTERS, channels=CHANNELS)
+
+@app.route("/api/insights-data")
+@_require_admin
+def api_insights_data():
+    from collections import defaultdict
+    result = {}
+    for qkey in QUARTERS:
+        q = _q_get(qkey)
+        if not q.get("initiated"): continue
+        drr_data  = q.get("drr_data") or []
+        all_subs  = _all_subs_for_quarter(qkey)
+        members   = [e for e in FORECAST_MEMBERS if e not in ADMINS]
+        months    = QUARTERS[qkey]["months"]
+        submitted = [s for s in all_subs.values() if s.get("submitted")]
+        pending   = len(members) - len(submitted)
+        ch_drr_totals = defaultdict(lambda: defaultdict(float))
+        cat_drr       = defaultdict(lambda: defaultdict(float))
+        top_products  = []
         for row in drr_data:
-            rid = row.get("_row_id",""); drr = row.get("_drr",{}).get(ch,{})
-            r = [row.get("Product Name",""), row.get("SKU",""),
-                 row.get("Category",""), row.get("Sub-Category","")]
-            r += [drr.get(dl,0) for dl in DRR_LABELS]
-            r += [saved.get(rid,{}).get(m,"") for m in months]
-            ws.append(r)
-    wb.save(dest)
+            drr_all = row.get("_drr", {})
+            cat     = row.get("Category", "Other")
+            name    = row.get("Product Name", "")
+            sku     = row.get("SKU", "")
+            prod_total = 0
+            prod_ch = {}
+            for ch in CHANNELS:
+                ch_drr = drr_all.get(ch, {})
+                for lbl in DRR_LABELS:
+                    v = ch_drr.get(lbl, 0) or 0
+                    ch_drr_totals[ch][lbl] += v
+                v7 = ch_drr.get("7 Days Overall DRR", 0) or 0
+                cat_drr[cat][ch] += v7
+                prod_total += v7
+                prod_ch[ch] = round(v7, 1)
+            top_products.append({"name":name,"sku":sku,"cat":cat,"total_7d":round(prod_total,1),"by_ch":prod_ch})
+        top_products.sort(key=lambda x: x["total_7d"], reverse=True)
+        ch_fill = {}
+        for ch in CHANNELS:
+            filled = 0; total_cells = 0
+            for sub in all_subs.values():
+                if sub.get("submitted"):
+                    saved = sub.get("data") or {}
+                    for rid in saved:
+                        for m in months:
+                            total_cells += 1
+                            v = saved[rid].get(m, "")
+                            if v != "" and v is not None: filled += 1
+            ch_fill[ch] = {"filled":filled,"total":total_cells,
+                           "pct":round(filled/total_cells*100,1) if total_cells else 0}
+        result[qkey] = {
+            "label":         QUARTERS[qkey]["label"],
+            "sku_count":     len(drr_data),
+            "total_members": len(members),
+            "submitted":     len(submitted),
+            "pending":       max(pending, 0),
+            "ch_drr_totals": {ch: dict(v) for ch, v in ch_drr_totals.items()},
+            "cat_drr":       {cat: dict(v) for cat, v in cat_drr.items()},
+            "top_products":  top_products[:20],
+            "ch_fill":       ch_fill,
+        }
+    return jsonify(result)
 
 if __name__ == "__main__":
-    print("\n  forecast.wbn — Wellbeing Nutrition")
+    print("\n  forecast.wbn — Wellbeing Nutrition v6")
     print("  http://localhost:5000\n")
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000, debug=True)

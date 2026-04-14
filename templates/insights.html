@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insights — forecast.wbn</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --g900:#1B4332;--g800:#1e4d39;--g700:#2D6A4F;--g600:#357a5c;--g500:#40916C;
+  --g400:#52a87e;--g300:#74C69D;--g200:#B7E4C7;--g100:#D8F3DC;--g50:#F0FFF4;
+  --surface:#F4F6F8;--white:#fff;--border:#E2E8F0;
+  --t1:#111827;--t2:#374151;--t3:#6B7280;--t4:#9CA3AF;
+  --danger:#EF4444;--warn:#F59E0B;--info:#3B82F6;--purple:#8B5CF6;
+  --ch-d2c:#40916C;--ch-m2b:#3B82F6;--ch-m2c:#8B5CF6;--ch-retail:#F59E0B;
+  --ch-export:#EC4899;--ch-amazon:#F97316;--ch-flip:#06B6D4;
+  --rad:10px;--rad-sm:6px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:14px}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--surface);color:var(--t1);min-height:100vh;display:flex;flex-direction:column}
+
+/* ── Nav ─────────────────────────────────────────────────────── */
+.nav{background:var(--g900);height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;flex-shrink:0;position:sticky;top:0;z-index:100}
+.nav-brand{display:flex;align-items:center;gap:10px}
+.nav-brand img{height:26px}
+.nav-t{color:#fff;font-size:14px;font-weight:600}
+.nav-s{color:var(--g200);font-size:11px}
+.nav-r{display:flex;align-items:center;gap:10px}
+.nav-link{color:var(--g200);font-size:12px;text-decoration:none;padding:6px 12px;border-radius:var(--rad-sm);transition:background .15s}
+.nav-link:hover{background:rgba(255,255,255,.1);color:#fff}
+.nav-btn{background:rgba(255,255,255,.12);color:#fff;border:none;padding:6px 14px;border-radius:var(--rad-sm);font-size:12px;cursor:pointer}
+.nav-btn:hover{background:rgba(255,255,255,.2)}
+
+/* ── Layout ──────────────────────────────────────────────────── */
+.page{max-width:1440px;margin:0 auto;padding:28px 24px 60px;flex:1}
+.page-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
+.page-hdr h1{font-size:22px;font-weight:700;color:var(--t1)}
+.page-hdr p{font-size:12px;color:var(--t3);margin-top:2px}
+.q-tabs{display:flex;gap:6px}
+.q-tab{padding:7px 16px;border-radius:var(--rad-sm);font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--white);color:var(--t2);transition:all .15s}
+.q-tab:hover{border-color:var(--g500);color:var(--g700)}
+.q-tab.active{background:var(--g700);color:#fff;border-color:var(--g700)}
+.q-tab:disabled{opacity:.35;cursor:not-allowed}
+
+/* ── Grid ────────────────────────────────────────────────────── */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:22px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-bottom:18px}
+.grid-full{margin-bottom:18px}
+@media(max-width:1100px){.grid-3{grid-template-columns:1fr 1fr}}
+@media(max-width:760px){.grid-2,.grid-3{grid-template-columns:1fr}}
+
+/* ── KPI Card ────────────────────────────────────────────────── */
+.kpi{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);padding:20px;position:relative;overflow:hidden}
+.kpi::after{content:'';position:absolute;top:0;left:0;width:3px;height:100%;border-radius:var(--rad) 0 0 var(--rad)}
+.kpi.green::after{background:var(--g500)}
+.kpi.blue::after{background:var(--info)}
+.kpi.amber::after{background:var(--warn)}
+.kpi.purple::after{background:var(--purple)}
+.kpi.red::after{background:var(--danger)}
+.kpi-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--t3)}
+.kpi-val{font-size:32px;font-weight:700;line-height:1;margin:8px 0 4px;color:var(--t1)}
+.kpi-sub{font-size:11px;color:var(--t4)}
+.kpi-badge{position:absolute;top:16px;right:16px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:20px}
+.kpi-badge.up{background:#DCFCE7;color:#166534}
+.kpi-badge.down{background:#FEE2E2;color:#991B1B}
+
+/* ── Chart Card ──────────────────────────────────────────────── */
+.card{background:var(--white);border:1px solid var(--border);border-radius:var(--rad);overflow:hidden}
+.card-hdr{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.card-title{font-size:14px;font-weight:600;color:var(--t1)}
+.card-sub{font-size:11px;color:var(--t3);margin-top:1px}
+.card-body{padding:20px}
+.chart-wrap{position:relative}
+
+/* ── Channel badges ──────────────────────────────────────────── */
+.ch-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600}
+.ch-d2c{background:#E8F5EC;color:var(--g700)}
+.ch-m2b{background:#EFF6FF;color:#1D4ED8}
+.ch-m2c{background:#F3EEFF;color:#6D28D9}
+.ch-ret{background:#FFFBEB;color:#92400E}
+.ch-exp{background:#FDF2F8;color:#9D174D}
+.ch-amz{background:#FFF7ED;color:#9A3412}
+.ch-flip{background:#ECFEFF;color:#155E75}
+
+/* ── Table ────────────────────────────────────────────────────── */
+.dt{width:100%;border-collapse:collapse;font-size:12px}
+.dt th{background:var(--surface);padding:9px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t3);border-bottom:1px solid var(--border);white-space:nowrap}
+.dt td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+.dt tr:last-child td{border-bottom:none}
+.dt tbody tr:hover{background:var(--g50)}
+.dt td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+.rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;font-size:10px;font-weight:700}
+.rank.g1{background:#FEF9C3;color:#92400E}
+.rank.g2{background:#F1F5F9;color:#475569}
+.rank.g3{background:#FEF2F2;color:#991B1B}
+.rank.gn{background:var(--surface);color:var(--t3)}
+
+/* ── Submission progress bars ────────────────────────────────── */
+.prog-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.prog-label{font-size:12px;font-weight:500;min-width:80px;color:var(--t2)}
+.prog-bar-wrap{flex:1;height:8px;background:var(--surface);border-radius:4px;overflow:hidden}
+.prog-bar{height:100%;border-radius:4px;transition:width .5s ease}
+.prog-pct{font-size:11px;font-weight:600;min-width:36px;text-align:right;color:var(--t2)}
+
+/* ── Empty & Loading ─────────────────────────────────────────── */
+.empty{padding:48px 20px;text-align:center;color:var(--t3);font-size:13px}
+.spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--g500);border-radius:50%;animation:spin .7s linear infinite;margin:40px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Channel DRR heatmap ─────────────────────────────────────── */
+.heatmap{display:grid;grid-template-columns:120px repeat(7,1fr);gap:1px;font-size:11px}
+.hm-head{background:var(--surface);padding:8px 6px;font-weight:700;text-align:center;color:var(--t3);font-size:10px;text-transform:uppercase;letter-spacing:.3px}
+.hm-head.row-head{text-align:left}
+.hm-cell{padding:10px 6px;text-align:center;font-weight:600;border-radius:3px}
+
+/* ── Segment donut legend ────────────────────────────────────── */
+.donut-legend{display:flex;flex-direction:column;gap:8px;padding-left:16px}
+.legend-row{display:flex;align-items:center;gap:8px;font-size:12px}
+.legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.legend-name{flex:1;color:var(--t2)}
+.legend-val{font-weight:600;color:var(--t1)}
+.legend-pct{font-size:10px;color:var(--t3)}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-brand">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="WBN" onerror="this.style.display='none'">
+    <div>
+      <div class="nav-t">Wellbeing Nutrition</div>
+      <div class="nav-s">Forecast Insights</div>
+    </div>
+  </div>
+  <div class="nav-r">
+    <a href="{{ url_for('admin_panel') }}" class="nav-link">Admin Panel</a>
+    <a href="{{ url_for('forecast') }}" class="nav-link">Forecast</a>
+    <span style="color:var(--g200);font-size:12px">{{ user_name }}</span>
+    <a href="{{ url_for('logout') }}" class="nav-btn">Logout</a>
+  </div>
+</nav>
+
+<div class="page">
+  <!-- Header -->
+  <div class="page-hdr">
+    <div>
+      <h1>Forecast Insights</h1>
+      <p>{{ today }} &middot; DRR analytics across all channels and categories</p>
+    </div>
+    <div class="q-tabs" id="qTabs"></div>
+  </div>
+
+  <!-- Loading state -->
+  <div id="loadingState"><div class="spinner"></div></div>
+  <!-- Main content -->
+  <div id="mainContent" style="display:none">
+
+    <!-- KPI Row -->
+    <div class="kpi-row" id="kpiRow"></div>
+
+    <!-- Row 1: Submission progress + Category distribution -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-hdr">
+          <div>
+            <div class="card-title">Submission Progress</div>
+            <div class="card-sub">Members who have submitted forecasts</div>
+          </div>
+        </div>
+        <div class="card-body" id="submissionProgress"></div>
+      </div>
+      <div class="card">
+        <div class="card-hdr">
+          <div>
+            <div class="card-title">DRR by Category</div>
+            <div class="card-sub">7-day overall DRR distribution</div>
+          </div>
+        </div>
+        <div class="card-body" style="display:flex;align-items:center;gap:0">
+          <div style="width:180px;flex-shrink:0"><canvas id="catDonut" height="180"></canvas></div>
+          <div class="donut-legend" id="catLegend" style="flex:1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: Channel DRR comparison bar chart -->
+    <div class="grid-full card">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">Channel DRR Comparison</div>
+          <div class="card-sub">7-day, 15-day, 30-day, 45-day, 60-day total DRR per channel</div>
+        </div>
+        <div id="drrPeriodTabs" style="display:flex;gap:4px"></div>
+      </div>
+      <div class="card-body">
+        <div class="chart-wrap" style="height:260px"><canvas id="chBar"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Row 3: Top products table + Category heatmap -->
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-hdr">
+          <div>
+            <div class="card-title">Top 15 Products by DRR</div>
+            <div class="card-sub">Ranked by combined 7-day DRR across all channels</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="dt" id="topProdsTable">
+            <thead><tr>
+              <th>#</th><th>Product</th><th>Category</th>
+              {% for ch in channels %}
+              <th>{{ ch }}</th>
+              {% endfor %}
+              <th>Total</th>
+            </tr></thead>
+            <tbody id="topProdsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-hdr">
+          <div>
+            <div class="card-title">Channel × DRR Period</div>
+            <div class="card-sub">Total DRR heatmap — darker = higher</div>
+          </div>
+        </div>
+        <div class="card-body" id="heatmapWrap"></div>
+      </div>
+    </div>
+
+    <!-- Row 4: Trend line - DRR across periods per channel -->
+    <div class="grid-full card">
+      <div class="card-hdr">
+        <div>
+          <div class="card-title">DRR Trend by Channel</div>
+          <div class="card-sub">How DRR changes from 7-day to 60-day window per channel</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="chart-wrap" style="height:240px"><canvas id="trendLine"></canvas></div>
+      </div>
+    </div>
+
+  </div><!-- end mainContent -->
+</div><!-- end page -->
+
+<script>
+const CHANNELS   = {{ channels | tojson }};
+const QUARTERS   = {{ quarters | tojson }};
+const DRR_LABELS = ['7 Days Overall DRR','15 Days Overall DRR','30 Days Overall DRR','45 Days Overall DRR','60 Days Overall DRR'];
+const DRR_SHORT  = ['7D','15D','30D','45D','60D'];
+
+const CH_COLORS = {
+  'D2C':     '#40916C','M-B2B':   '#3B82F6','M-B2C':    '#8B5CF6',
+  'Retail':  '#F59E0B','Export':  '#EC4899','Amazon':   '#F97316','Flipkart': '#06B6D4'
+};
+const CAT_COLORS = ['#40916C','#3B82F6','#F59E0B','#8B5CF6','#EC4899','#F97316','#06B6D4'];
+
+let allData   = {};   // qkey -> insights data
+let curQ      = null;
+let curPeriod = 0;    // index into DRR_SHORT for bar chart
+
+/* ── Charts ─────────────────────────────────────────────────── */
+let catChart, barChart, lineChart;
+
+/* ── Load ─────────────────────────────────────────────────────── */
+async function load(){
+  try{
+    const r=await fetch('/api/insights-data');
+    allData=await r.json();
+    buildQTabs();
+    const firstActive=Object.keys(allData)[0];
+    if(firstActive){ selectQ(firstActive); }
+    else{
+      document.getElementById('loadingState').innerHTML='<div class="empty">No quarters have been initiated yet. Go to Admin Panel to start a quarter.</div>';
+    }
+  }catch(e){
+    document.getElementById('loadingState').innerHTML='<div class="empty">Failed to load data: '+e.message+'</div>';
+  }
+}
+
+function buildQTabs(){
+  const wrap=document.getElementById('qTabs');
+  wrap.innerHTML='';
+  Object.keys(QUARTERS).forEach(qkey=>{
+    const btn=document.createElement('button');
+    btn.className='q-tab'+(allData[qkey]?'':' ');
+    btn.textContent=QUARTERS[qkey].label;
+    btn.disabled=!allData[qkey];
+    btn.onclick=()=>selectQ(qkey);
+    btn.id='qtab-'+qkey;
+    wrap.appendChild(btn);
+  });
+}
+
+function selectQ(qkey){
+  if(!allData[qkey]) return;
+  curQ=qkey;
+  document.querySelectorAll('.q-tab').forEach(t=>t.classList.toggle('active',t.id==='qtab-'+qkey));
+  document.getElementById('loadingState').style.display='none';
+  document.getElementById('mainContent').style.display='';
+  renderAll(allData[qkey]);
+}
+
+/* ── Render all widgets ──────────────────────────────────────── */
+function renderAll(d){
+  renderKPIs(d);
+  renderSubmissionProgress(d);
+  renderCatDonut(d);
+  renderBarChart(d, curPeriod);
+  buildDrrPeriodTabs(d);
+  renderTopProducts(d);
+  renderHeatmap(d);
+  renderTrendLine(d);
+}
+
+/* ── KPIs ────────────────────────────────────────────────────── */
+function renderKPIs(d){
+  const totalDRR=Object.values(d.ch_drr_totals).reduce((s,v)=>s+(v['7 Days Overall DRR']||0),0);
+  const topCat=Object.entries(d.cat_drr||{}).sort((a,b)=>
+    Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0))[0];
+  const submPct=d.total_members>0?Math.round(d.submitted/d.total_members*100):0;
+  const topCh=Object.entries(d.ch_drr_totals).sort((a,b)=>(b[1]['7 Days Overall DRR']||0)-(a[1]['7 Days Overall DRR']||0))[0];
+
+  const kpis=[
+    {label:'Total 7D DRR', val:fmt(totalDRR), sub:'across all channels', cls:'green'},
+    {label:'SKUs Tracked', val:d.sku_count, sub:d.label+' quarter', cls:'blue'},
+    {label:'Submissions', val:d.submitted+' / '+d.total_members, sub:submPct+'% complete', cls:submPct===100?'green':submPct>50?'amber':'red'},
+    {label:'Top Channel', val:topCh?topCh[0]:'—', sub:topCh?fmt(topCh[1]['7 Days Overall DRR']||0)+' 7D DRR':'', cls:'purple'},
+    {label:'Top Category', val:topCat?topCat[0].replace('/','/\u200B'):'—', sub:'by 7D DRR', cls:'amber'},
+  ];
+
+  document.getElementById('kpiRow').innerHTML=kpis.map(k=>
+    `<div class="kpi ${k.cls}">
+      <div class="kpi-label">${k.label}</div>
+      <div class="kpi-val">${k.val}</div>
+      <div class="kpi-sub">${k.sub}</div>
+    </div>`).join('');
+}
+
+/* ── Submission progress ─────────────────────────────────────── */
+function renderSubmissionProgress(d){
+  const pct=d.total_members>0?Math.round(d.submitted/d.total_members*100):0;
+  const html=`
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:600;color:var(--t1)">${d.submitted} of ${d.total_members} members submitted</span>
+        <span style="font-size:13px;font-weight:700;color:var(--g700)">${pct}%</span>
+      </div>
+      <div style="height:10px;background:var(--surface);border-radius:5px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:var(--g500);border-radius:5px;transition:width .6s ease"></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px">
+      <div style="text-align:center;padding:12px;background:var(--g50);border-radius:8px">
+        <div style="font-size:24px;font-weight:700;color:var(--g700)">${d.submitted}</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:2px">Submitted</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#FFFBEB;border-radius:8px">
+        <div style="font-size:24px;font-weight:700;color:var(--warn)">${d.pending}</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:2px">Pending</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#EFF6FF;border-radius:8px">
+        <div style="font-size:24px;font-weight:700;color:var(--info)">${d.total_members}</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:2px">Total</div>
+      </div>
+    </div>`;
+  document.getElementById('submissionProgress').innerHTML=html;
+}
+
+/* ── Category donut ──────────────────────────────────────────── */
+function renderCatDonut(d){
+  const cats=Object.entries(d.cat_drr||{}).map(([cat,chData])=>({
+    cat, total:Object.values(chData).reduce((s,v)=>s+v,0)
+  })).sort((a,b)=>b.total-a.total);
+  const top5=cats.slice(0,5);
+  const otherTotal=cats.slice(5).reduce((s,c)=>s+c.total,0);
+  if(otherTotal>0) top5.push({cat:'Other',total:otherTotal});
+  const grandTotal=top5.reduce((s,c)=>s+c.total,0);
+  const labels=top5.map(c=>c.cat);
+  const values=top5.map(c=>c.total);
+  const colors=CAT_COLORS.slice(0,top5.length);
+
+  if(catChart) catChart.destroy();
+  catChart=new Chart(document.getElementById('catDonut'),{
+    type:'doughnut',
+    data:{labels,datasets:[{data:values,backgroundColor:colors,borderWidth:2,borderColor:'#fff'}]},
+    options:{cutout:'68%',plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+fmt(ctx.parsed)+' DRR'}}}}
+  });
+
+  document.getElementById('catLegend').innerHTML=top5.map((c,i)=>
+    `<div class="legend-row">
+      <span class="legend-dot" style="background:${colors[i]}"></span>
+      <span class="legend-name">${c.cat}</span>
+      <span class="legend-val">${fmt(c.total)}</span>
+      <span class="legend-pct">${grandTotal>0?Math.round(c.total/grandTotal*100):0}%</span>
+    </div>`).join('');
+}
+
+/* ── DRR period tabs ─────────────────────────────────────────── */
+function buildDrrPeriodTabs(d){
+  const wrap=document.getElementById('drrPeriodTabs');
+  wrap.innerHTML=DRR_SHORT.map((s,i)=>
+    `<button onclick="switchPeriod(${i})" id="ptab-${i}"
+      style="padding:5px 10px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;
+             border:1px solid var(--border);background:${i===curPeriod?'var(--g700)':'var(--white)'};
+             color:${i===curPeriod?'#fff':'var(--t2)'};">${s}</button>`).join('');
+}
+
+function switchPeriod(i){
+  curPeriod=i;
+  buildDrrPeriodTabs(allData[curQ]);
+  renderBarChart(allData[curQ],i);
+}
+
+/* ── Channel bar chart ───────────────────────────────────────── */
+function renderBarChart(d,periodIdx){
+  const label=DRR_LABELS[periodIdx];
+  const chData=CHANNELS.map(ch=>(d.ch_drr_totals[ch]||{})[label]||0);
+  if(barChart) barChart.destroy();
+  barChart=new Chart(document.getElementById('chBar'),{
+    type:'bar',
+    data:{
+      labels:CHANNELS,
+      datasets:[{
+        label:DRR_SHORT[periodIdx]+' DRR',
+        data:chData,
+        backgroundColor:CHANNELS.map(ch=>CH_COLORS[ch]||'#888'),
+        borderRadius:6,
+        borderSkipped:false,
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>' '+fmt(ctx.parsed.y)+' DRR'}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:12,weight:'600'}}},
+        y:{grid:{color:'#F1F5F9'},ticks:{callback:v=>fmt(v),font:{size:11}}}
+      }
+    }
+  });
+}
+
+/* ── Top products table ──────────────────────────────────────── */
+function renderTopProducts(d){
+  const prods=d.top_products||[];
+  const tbody=document.getElementById('topProdsTbody');
+  tbody.innerHTML=prods.slice(0,15).map((p,i)=>{
+    const rankCls=i===0?'g1':i===1?'g2':i===2?'g3':'gn';
+    const chCells=CHANNELS.map(ch=>`<td class="num" style="color:${CH_COLORS[ch]||'#888'}">${fmt(p.by_ch[ch]||0)}</td>`).join('');
+    return `<tr>
+      <td><span class="rank ${rankCls}">${i+1}</span></td>
+      <td>
+        <div style="font-weight:600;font-size:12px">${p.name}</div>
+        <div style="font-size:10px;color:var(--t3)">${p.sku}</div>
+      </td>
+      <td><span style="font-size:11px;color:var(--t2)">${p.cat}</span></td>
+      ${chCells}
+      <td class="num" style="font-weight:700">${fmt(p.total_7d)}</td>
+    </tr>`;
+  }).join('');
+}
+
+/* ── Channel × Period heatmap ────────────────────────────────── */
+function renderHeatmap(d){
+  // Find max value for color scaling
+  let maxVal=0;
+  CHANNELS.forEach(ch=>{
+    DRR_LABELS.forEach(l=>{ const v=(d.ch_drr_totals[ch]||{})[l]||0; if(v>maxVal) maxVal=v; });
+  });
+
+  function cellColor(v){
+    if(!v||!maxVal) return '#F8FAFC';
+    const t=v/maxVal;
+    // Green gradient from very light to dark
+    const r=Math.round(216-t*(216-27)); const g=Math.round(243-t*(243-67)); const b=Math.round(220-t*(220-50));
+    return `rgb(${r},${g},${b})`;
+  }
+  function textColor(v){
+    if(!v||!maxVal) return 'var(--t3)';
+    return v/maxVal > 0.5 ? '#fff' : 'var(--g900)';
+  }
+
+  let html='<div class="heatmap">';
+  // Header row
+  html+='<div class="hm-head row-head">Channel</div>';
+  DRR_SHORT.forEach(s=>{ html+=`<div class="hm-head">${s}</div>`; });
+  // Data rows
+  CHANNELS.forEach(ch=>{
+    html+=`<div class="hm-head row-head" style="color:${CH_COLORS[ch]||'#888'};font-weight:700">${ch}</div>`;
+    DRR_LABELS.forEach(l=>{
+      const v=(d.ch_drr_totals[ch]||{})[l]||0;
+      const bg=cellColor(v); const fg=textColor(v);
+      html+=`<div class="hm-cell" style="background:${bg};color:${fg}">${v>0?fmt(v):'—'}</div>`;
+    });
+  });
+  html+='</div>';
+  document.getElementById('heatmapWrap').innerHTML=html;
+}
+
+/* ── Trend line ──────────────────────────────────────────────── */
+function renderTrendLine(d){
+  const datasets=CHANNELS.map(ch=>({
+    label:ch,
+    data:DRR_LABELS.map(l=>(d.ch_drr_totals[ch]||{})[l]||0),
+    borderColor:CH_COLORS[ch]||'#888',
+    backgroundColor:(CH_COLORS[ch]||'#888')+'22',
+    borderWidth:2.5,
+    pointRadius:4,
+    pointHoverRadius:6,
+    tension:.35,
+    fill:false,
+  }));
+  if(lineChart) lineChart.destroy();
+  lineChart=new Chart(document.getElementById('trendLine'),{
+    type:'line',
+    data:{labels:DRR_SHORT,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top',labels:{boxWidth:12,font:{size:11}}},
+               tooltip:{callbacks:{label:ctx=>' '+ctx.dataset.label+': '+fmt(ctx.parsed.y)}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:12}}},
+        y:{grid:{color:'#F1F5F9'},ticks:{callback:v=>fmt(v),font:{size:11}}}
+      }
+    }
+  });
+}
+
+/* ── Helpers ─────────────────────────────────────────────────── */
+function fmt(n){ return Number(n).toLocaleString('en-IN',{maximumFractionDigits:1}); }
+
+/* ── Init ──────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', load);
+</script>
+</body>
+</html>
