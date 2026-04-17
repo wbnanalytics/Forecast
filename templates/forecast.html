@@ -159,6 +159,19 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 .modal textarea{width:100%;border:1px solid var(--border);border-radius:var(--rad);padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:72px;margin-bottom:14px;outline:none;transition:border-color .15s}
 .modal textarea:focus{border-color:var(--g500)}
 .merr{color:var(--danger);font-size:11px;margin-bottom:10px}
+
+/* ── Admin ticker banner ── */
+.ban-ticker-info   {background:#EFF6FF;border-bottom:1px solid #BFDBFE;color:#1E40AF}
+.ban-ticker-warn   {background:#FFFBEB;border-bottom:1px solid #FCD34D;color:#92400E}
+.ban-ticker-success{background:#F0FFF4;border-bottom:1px solid #BBF7D0;color:#166534}
+.ban-ticker-danger {background:#FFF1F2;border-bottom:1px solid #FECDD3;color:#9F1239}
+
+/* ── Upload-excel drop zone ── */
+.upload-zone{border:2px dashed var(--border);border-radius:var(--rad);padding:18px 20px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;margin-top:10px}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--g500);background:var(--g50)}
+.upload-zone input{display:none}
+.upload-zone-label{font-size:12px;color:var(--t3)}
+.upload-zone-label strong{color:var(--g700)}
 </style>
 </head>
 <body id="bodyEl">
@@ -206,6 +219,40 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
   <div class="modal-actions">
     <button class="btn" onclick="closeM('mRefill')">Cancel</button>
     <button class="btn btn-warn" onclick="submitRefill()">Send Request</button>
+  </div>
+</div>
+</div>
+
+<!-- Upload Excel Modal -->
+<div class="mover" id="mUploadXl">
+<div class="modal" style="width:460px">
+  <h2>Upload Filled Excel</h2>
+  <p style="font-size:13px;color:var(--t2);margin-bottom:14px;line-height:1.6">
+    Download the template, fill in the month columns in Excel,
+    then upload it here. Values will be merged into your form —
+    you can still edit them before submitting.
+  </p>
+  <div class="upload-zone" id="uploadZone"
+       ondragover="event.preventDefault();this.classList.add('drag')"
+       ondragleave="this.classList.remove('drag')"
+       ondrop="handleXlDrop(event)"
+       onclick="document.getElementById('xlFileInput').click()">
+    <input type="file" id="xlFileInput" accept=".xlsx,.xls" onchange="handleXlFileSelect(this)">
+    <svg width="28" height="28" fill="none" stroke="var(--border-d)" stroke-width="1.5" viewBox="0 0 24 24" style="margin:0 auto 8px;display:block">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="12" y1="18" x2="12" y2="12"/>
+      <polyline points="9 15 12 12 15 15"/>
+    </svg>
+    <div class="upload-zone-label">
+      <strong>Click to choose</strong> or drag &amp; drop your filled Excel here
+    </div>
+    <div id="xlFileName" style="font-size:11px;color:var(--g700);margin-top:6px;font-weight:600"></div>
+  </div>
+  <div id="xlUploadMsg" style="font-size:12px;margin-top:10px;min-height:18px"></div>
+  <div class="modal-actions" style="margin-top:16px">
+    <button class="btn" onclick="closeM('mUploadXl')">Cancel</button>
+    <button class="btn btn-primary" id="btnDoUpload" onclick="doUploadExcel()" disabled>Import Values</button>
   </div>
 </div>
 </div>
@@ -316,6 +363,24 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
   A new quarter has been activated by admin — click to reload and see it.
 </div>
 
+
+<!-- Admin ticker banner -->
+{% if ticker.active and ticker.message %}
+<div class="banner ban-ticker-{{ ticker.style }} on" id="banTicker">
+  <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10"/>
+    <line x1="12" y1="8" x2="12" y2="12"/>
+    <line x1="12" y1="16" x2="12.01" y2="16"/>
+  </svg>
+  <span id="banTickerTxt">{{ ticker.message }}</span>
+</div>
+{% else %}
+<div class="banner" id="banTicker" style="display:none">
+  <span id="banTickerTxt"></span>
+</div>
+{% endif %}
+
+
 <!-- Filter bar -->
 <div class="filter-bar" id="filterBar">
   <label>Filter:</label>
@@ -351,6 +416,42 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
   </div>
   <div class="toolbar-right" id="toolRight">
     <button class="btn" id="btnDraft" onclick="saveDraft()" style="display:none">Save Draft</button>
+    <!-- Load sample values — shown only when flag is on and not submitted -->
+    {% if flags.get('load_sample_values', true) %}
+    <button class="btn" id="btnSample" onclick="loadSampleValues()" style="display:none"
+      title="Fill all month columns with sample placeholder values">
+      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </svg>
+      Sample Values
+    </button>
+    {% endif %}
+
+    <!-- Download template — shown when flag is on -->
+    {% if flags.get('download_template', true) %}
+    <button class="btn" id="btnTpl" onclick="downloadTpl()" style="display:none"
+      title="Download blank Excel template to fill offline">
+      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      Template
+    </button>
+    {% endif %}
+
+    <!-- Upload filled Excel — shown when flag is on and not submitted -->
+    {% if flags.get('upload_excel_fill', true) %}
+    <button class="btn" id="btnUploadXl" onclick="openUploadModal()" style="display:none"
+      title="Upload a filled Excel template to auto-fill the form">
+      <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Upload Excel
+    </button>
+    {% endif %}
     <button class="btn btn-primary" id="btnSubmit" onclick="openConfirm()" style="display:none">Submit Forecast</button>
 
   </div>
@@ -391,13 +492,11 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 </div>
 
 <script>
-/* ── Server config ─────────────────────────────────────────────── */
-const IS_ADMIN   = {{ 'true' if is_admin else 'false' }};
+const IS_ADMIN   = {{ is_admin | tojson }};
 const QUARTERS   = {{ quarters | tojson }};
 const DRR_LABELS = {{ drr_labels | tojson }};
 const DRR_SHORT  = {{ drr_short | tojson }};
 
-/* ── State ─────────────────────────────────────────────────────── */
 let qStatus   = {{ q_status | tojson }};
 let curQ      = null;
 let allRows   = [];
@@ -1011,6 +1110,140 @@ document.addEventListener('keydown',e=>{
     document.addEventListener('mouseup',()=>{ dragging=false; });
   });
 })();
+
+const SERVER_FLAGS = {{ flags | tojson }};
+
+/* ── Ticker polling (checks every 60 s for live changes) ── */
+setInterval(async () => {
+  try {
+    const r = await fetch('/api/get-ticker');
+    if (!r.ok) return;
+    const t = await r.json();
+    const el  = document.getElementById('banTicker');
+    const txt = document.getElementById('banTickerTxt');
+    if (t.active && t.message) {
+      txt.textContent = t.message;
+      el.className = 'banner ban-ticker-' + (t.style || 'info') + ' on';
+    } else {
+      el.style.display = 'none';
+    }
+  } catch(e) {}
+}, 60000);
+
+/* ── Show/hide new toolbar buttons when DRR loads ── */
+// Extend applyUIState to also manage the three new buttons.
+// We wrap it — the original function is still called first.
+const _origApplyUIState = applyUIState;
+function applyUIState(j) {
+  _origApplyUIState(j);
+
+  const flags     = j.flags || SERVER_FLAGS || {};
+  const submitted = j.submitted;
+
+  // Sample values button — only when not submitted
+  const bSample = document.getElementById('btnSample');
+  if (bSample) bSample.style.display = (flags.load_sample_values && !submitted) ? '' : 'none';
+
+  // Download template button
+  const bTpl = document.getElementById('btnTpl');
+  if (bTpl) bTpl.style.display = flags.download_template ? '' : 'none';
+
+  // Upload excel button — only when not submitted
+  const bUp = document.getElementById('btnUploadXl');
+  if (bUp) bUp.style.display = (flags.upload_excel_fill && !submitted) ? '' : 'none';
+}
+
+/* ── buildTable override: also show/hide after table is built ── */
+const _origBuildTable = buildTable;
+function buildTable(rows, userCh, allChs) {
+  _origBuildTable(rows, userCh, allChs);
+  // Show template and sample buttons whenever a quarter is loaded
+  const flags = SERVER_FLAGS || {};
+  const bTpl  = document.getElementById('btnTpl');
+  if (bTpl && flags.download_template) bTpl.style.display = '';
+  const bSample = document.getElementById('btnSample');
+  if (bSample && flags.load_sample_values && !isLocked) bSample.style.display = '';
+  const bUp = document.getElementById('btnUploadXl');
+  if (bUp && flags.upload_excel_fill && !isLocked) bUp.style.display = '';
+}
+
+/* ── Load sample values ── */
+function loadSampleValues() {
+  if (!allRows.length) { toast('Load a quarter first.', 'i'); return; }
+  if (isLocked)        { toast('Form is locked.', 'i'); return; }
+  if (!confirm('This will overwrite any values you have already entered. Continue?')) return;
+
+  // Fill each month column with a plausible random value (50–500, multiple of 10)
+  document.querySelectorAll('#gridBody input[data-month]').forEach(inp => {
+    const ri = parseInt(inp.dataset.ri);
+    const m  = inp.dataset.month;
+    const v  = Math.round((Math.random() * 45 + 5)) * 10;  // 50–500 step 10
+    inp.value        = v;
+    inp.classList.remove('err');
+    if (allRows[ri]) allRows[ri][m] = v;
+  });
+  toast('Sample values loaded — review before submitting.');
+  setStatus('Sample values filled — ' + allRows.length + ' rows.');
+}
+
+/* ── Upload Excel modal ── */
+let _xlFile = null;
+
+function openUploadModal() {
+  if (!curQ)     { toast('Load a quarter first.', 'i'); return; }
+  if (isLocked)  { toast('Form is locked.', 'i'); return; }
+  _xlFile = null;
+  document.getElementById('xlFileName').textContent  = '';
+  document.getElementById('xlUploadMsg').textContent  = '';
+  document.getElementById('btnDoUpload').disabled     = true;
+  document.getElementById('xlFileInput').value        = '';
+  openM('mUploadXl');
+}
+
+function handleXlFileSelect(input) {
+  if (input.files && input.files[0]) _xlFileReady(input.files[0]);
+}
+
+function handleXlDrop(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) _xlFileReady(f);
+}
+
+function _xlFileReady(file) {
+  if (!file.name.match(/\.(xlsx|xls)$/i)) {
+    document.getElementById('xlUploadMsg').innerHTML =
+      '<span style="color:var(--danger)">Only .xlsx / .xls files are accepted.</span>';
+    return;
+  }
+  _xlFile = file;
+  document.getElementById('xlFileName').textContent  = file.name;
+  document.getElementById('xlUploadMsg').textContent  = 'Ready to import.';
+  document.getElementById('btnDoUpload').disabled     = false;
+}
+
+async function doUploadExcel() {
+  if (!_xlFile || !curQ) return;
+  const fd = new FormData();
+  fd.append('file', _xlFile);
+  closeM('mUploadXl');
+  spin.show('Importing Excel...');
+  try {
+    const r = await fetch('/api/upload-excel-fill/' + curQ, { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) { toast(j.error || 'Import failed.', 'e', 6000); return; }
+
+    // Merge imported values into the live grid
+    if (j.status === 'merged') {
+      // Reload DRR to pull the saved draft from server
+      await loadDRR(curQ);
+      toast(j.message || 'Excel imported.', 's', 5000);
+    }
+  } catch(e) { toast('Upload error: ' + e.message, 'e'); }
+  finally { spin.hide(); }
+}
+
 
 /* ── Init ─────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded',()=>{

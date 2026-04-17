@@ -88,6 +88,23 @@ table.dt tbody tr:hover{background:var(--g50)}
 .spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--g500);border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .cd-badge{background:#FFF1F2;color:#9F1239;font-size:10px;padding:2px 6px;border-radius:10px;font-weight:600}
+/* ── Ticker / Feature-flags panel ── */
+.ticker-preview{padding:10px 16px;border-radius:var(--rad);font-size:13px;font-weight:500;margin-top:10px;display:none}
+.ticker-preview.on{display:block}
+.tp-info   {background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF}
+.tp-warn   {background:#FFFBEB;border:1px solid #FCD34D;color:#92400E}
+.tp-success{background:#F0FFF4;border:1px solid #BBF7D0;color:#166534}
+.tp-danger {background:#FFF1F2;border:1px solid #FECDD3;color:#9F1239}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--border)}
+.toggle-row:last-child{border-bottom:none}
+.toggle-label{font-size:13px;font-weight:500;color:var(--t1)}
+.toggle-desc {font-size:11px;color:var(--t3);margin-top:2px}
+.sw{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}
+.sw input{opacity:0;width:0;height:0}
+.sw-track{position:absolute;inset:0;background:var(--border);border-radius:11px;transition:background .2s;cursor:pointer}
+.sw input:checked + .sw-track{background:var(--g500)}
+.sw-thumb{position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform .2s;pointer-events:none}
+.sw input:checked ~ .sw-thumb{transform:translateX(18px)}
 </style>
 </head>
 <body>
@@ -251,6 +268,107 @@ table.dt tbody tr:hover{background:var(--g50)}
     {% endfor %}
   </div>
 
+    <!-- ── Ticker & Feature Flags ─────────────────────────────────────────── -->
+  <div class="section" style="margin-bottom:20px">
+    <div class="sec-hdr">
+      <div>
+        <span class="sec-title">Broadcast Ticker &amp; Feature Flags</span>
+        <span class="sec-sub" style="display:block;margin-top:2px">Set a live message on the forecast page · Enable or disable member features</span>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid var(--border)">
+
+      <!-- LEFT: Ticker composer -->
+      <div style="padding:20px;border-right:1px solid var(--border)">
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--t1)">
+          Forecast page ticker
+        </div>
+        <div style="margin-bottom:10px">
+          <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px">Message</label>
+          <textarea id="tickerMsg" rows="2"
+            style="width:100%;border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:13px;font-family:inherit;resize:vertical;outline:none;transition:border-color .15s"
+            onfocus="this.style.borderColor='var(--g500)'" onblur="this.style.borderColor='var(--border)'"
+            placeholder="e.g. Q2 forecast deadline is 30 June. Submit before EOD.">{{ ticker.message }}</textarea>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+          <label style="font-size:11px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.4px">Style</label>
+          <select id="tickerStyle" onchange="previewTicker()"
+            style="border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:12px;background:#fff;outline:none;color:var(--t1);cursor:pointer">
+            <option value="info"    {% if ticker.style=='info'    %}selected{% endif %}>ℹ Info (blue)</option>
+            <option value="warn"    {% if ticker.style=='warn'    %}selected{% endif %}>⚠ Warning (yellow)</option>
+            <option value="success" {% if ticker.style=='success' %}selected{% endif %}>✅ Success (green)</option>
+            <option value="danger"  {% if ticker.style=='danger'  %}selected{% endif %}>🔴 Alert (red)</option>
+          </select>
+          <div style="display:flex;align-items:center;gap:7px;margin-left:auto">
+            <span style="font-size:12px;color:var(--t2)">Active</span>
+            <label class="sw">
+              <input type="checkbox" id="tickerActive" onchange="previewTicker()"
+                {% if ticker.active %}checked{% endif %}>
+              <span class="sw-track"></span>
+              <span class="sw-thumb"></span>
+            </label>
+          </div>
+        </div>
+        <!-- Live preview -->
+        <div id="tickerPreview" class="ticker-preview {% if ticker.active %}on tp-{{ ticker.style }}{% endif %}">
+          {{ ticker.message or '(preview will appear here)' }}
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn bp" onclick="saveTicker()">Save Ticker</button>
+          <button class="btn bo" onclick="clearTicker()">Clear</button>
+        </div>
+      </div>
+
+      <!-- RIGHT: Feature flags -->
+      <div style="padding:20px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--t1)">
+          Member feature flags
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Load sample values</div>
+            <div class="toggle-desc">Members can pre-fill the form with sample placeholder data</div>
+          </div>
+          <label class="sw" style="margin-left:16px">
+            <input type="checkbox" id="flag-load_sample_values"
+              {% if flags.get('load_sample_values', true) %}checked{% endif %}
+              onchange="setFlag('load_sample_values', this.checked)">
+            <span class="sw-track"></span>
+            <span class="sw-thumb"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Download template</div>
+            <div class="toggle-desc">Members can download the blank Excel template for offline filling</div>
+          </div>
+          <label class="sw" style="margin-left:16px">
+            <input type="checkbox" id="flag-download_template"
+              {% if flags.get('download_template', true) %}checked{% endif %}
+              onchange="setFlag('download_template', this.checked)">
+            <span class="sw-track"></span>
+            <span class="sw-thumb"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Upload filled Excel</div>
+            <div class="toggle-desc">Members can upload a filled Excel template instead of typing values</div>
+          </div>
+          <label class="sw" style="margin-left:16px">
+            <input type="checkbox" id="flag-upload_excel_fill"
+              {% if flags.get('upload_excel_fill', true) %}checked{% endif %}
+              onchange="setFlag('upload_excel_fill', this.checked)">
+            <span class="sw-track"></span>
+            <span class="sw-thumb"></span>
+          </label>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Activity log -->
   <div class="section">
     <div class="sec-hdr">
@@ -296,13 +414,15 @@ function toggleQ(qkey){
   document.getElementById('qbody-'+qkey).classList.toggle('open');
 }
 
-// Auto-open quarters that are active or have pending refills
-document.addEventListener('DOMContentLoaded',()=>{
-  {% for qkey, qi in q_info.items() %}
-  {% if qi.initiated and (qi.pending_refills > 0 or qi.submitted_count > 0) %}
-  document.getElementById('qbody-{{ qkey }}').classList.add('open');
-  {% endif %}
-  {% endfor %}
+document.addEventListener('DOMContentLoaded', () => {
+  Object.keys(qInfo).forEach(qkey => {
+    const qi = qInfo[qkey];
+
+    if (qi.initiated && (qi.pending_refills > 0 || qi.submitted_count > 0)) {
+      const el = document.getElementById(`qbody-${qkey}`);
+      if (el) el.classList.add('open');
+    }
+  });
 });
 
 async function initiateQ(qkey, form, evt){
@@ -345,6 +465,41 @@ async function forceUnlock(qkey,email,btn){
   const j=await post('/admin/api/force-unlock',{quarter:qkey,email});
   if(j.status==='unlocked'){toast('Unlocked.');setTimeout(()=>location.reload(),1200);}
   else toast(j.error||'Failed.','e');
+}
+/* ── Ticker ── */
+function previewTicker(){
+  const msg    = document.getElementById('tickerMsg').value.trim();
+  const style  = document.getElementById('tickerStyle').value;
+  const active = document.getElementById('tickerActive').checked;
+  const el     = document.getElementById('tickerPreview');
+  el.textContent = msg || '(preview will appear here)';
+  el.className   = 'ticker-preview ' + (active ? 'on tp-'+style : '');
+}
+
+async function saveTicker(){
+  const message = document.getElementById('tickerMsg').value.trim();
+  const style   = document.getElementById('tickerStyle').value;
+  const active  = document.getElementById('tickerActive').checked;
+  if(active && !message){ toast('Enter a message before activating.','e'); return; }
+  const j = await post('/admin/api/set-ticker', {message, active, style});
+  if(j.status==='ok') toast(active ? 'Ticker activated.' : 'Ticker saved (inactive).');
+  else toast(j.error||'Failed.','e');
+}
+
+function clearTicker(){
+  document.getElementById('tickerMsg').value = '';
+  document.getElementById('tickerActive').checked = false;
+  previewTicker();
+  saveTicker();
+}
+
+document.getElementById('tickerMsg').addEventListener('input', previewTicker);
+
+/* ── Feature flags ── */
+async function setFlag(flag, enabled){
+  const j = await post('/admin/api/set-feature-flag', {flag, enabled});
+  if(j.status==='ok') toast((enabled ? '✅ Enabled: ' : '🚫 Disabled: ') + flag.replace(/_/g,' '));
+  else { toast(j.error||'Failed.','e'); location.reload(); }
 }
 </script>
 </body>

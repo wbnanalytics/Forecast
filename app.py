@@ -25,9 +25,14 @@ from excel_handler import (CHANNELS, get_sample_products, save_submission_log)
 
 # ── Optional DB import (graceful fallback to in-memory if not configured) ──
 try:
-    from db import (db_save_submission, db_get_submission, db_get_all_subs_for_quarter,
-                    db_save_quarter, db_get_quarter, db_revoke_quarter,
-                    db_save_log, db_get_log, DB_ENABLED)
+    from db import (
+        db_save_submission, db_get_submission, db_get_all_subs_for_quarter,
+        db_save_quarter, db_get_quarter, db_revoke_quarter,
+        db_save_log, db_get_log,
+        db_get_feature_flags, db_set_feature_flag,   
+        db_get_ticker, db_set_ticker,                 
+        DB_ENABLED,
+    )
 except ImportError:
     DB_ENABLED = False
     def db_save_submission(*a, **kw): pass
@@ -38,6 +43,10 @@ except ImportError:
     def db_revoke_quarter(*a, **kw): pass
     def db_save_log(*a, **kw): pass
     def db_get_log(*a, **kw): return []
+    def db_get_feature_flags(*a, **kw): return {}   # ← NEW
+    def db_set_feature_flag(*a, **kw): pass          # ← NEW
+    def db_get_ticker(*a, **kw): return {"message":"","active":False,"style":"info"}  # ← NEW
+    def db_set_ticker(*a, **kw): pass                 # ← NEW
 
 load_dotenv()
 
@@ -101,12 +110,48 @@ _lock        = threading.Lock()
 _quarters    = {}
 _submissions = {}
 _admin_log   = []
+_feature_flags = {
+    "load_sample_values": True,
+    "download_template":  True,
+    "upload_excel_fill":  True,
+}
+_ticker = {"message": "", "active": False, "style": "info"}
 
 MONTH_NUM = {
     "January":1,"February":2,"March":3,"April":4,
     "May":5,"June":6,"July":7,"August":8,"September":9,
     "October":10,"November":11,"December":12
 }
+
+def _get_flags() -> dict:
+    """Return current feature flags from DB or in-memory fallback."""
+    if DB_ENABLED:
+        f = db_get_feature_flags()
+        # Fill any missing keys with defaults
+        for k, v in _feature_flags.items():
+            f.setdefault(k, v)
+        return f
+    return dict(_feature_flags)
+
+def _set_flag(key: str, value: bool):
+    if DB_ENABLED:
+        db_set_feature_flag(key, value)
+    else:
+        with _lock:
+            _feature_flags[key] = value
+
+def _get_ticker_data() -> dict:
+    if DB_ENABLED:
+        return db_get_ticker()
+    with _lock:
+        return dict(_ticker)
+
+def _set_ticker_data(message: str, active: bool, style: str):
+    if DB_ENABLED:
+        db_set_ticker(message, active, style)
+    else:
+        with _lock:
+            _ticker.update({"message": message, "active": active, "style": style})
 
 # ── Submission helpers ────────────────────────────────────────────────────────
 def _sub_key(qkey, email):
@@ -419,7 +464,10 @@ def forecast():
         q_status=q_status,
         today=datetime.date.today().strftime("%A, %d %B %Y"),
         db_enabled=DB_ENABLED,
+        ticker=_get_ticker_data(),          # ← NEW
+        flags=_get_flags(),                 # ← NEW
     )
+
 
 # ── API: Quarter status poll ──────────────────────────────────────────────────
 @app.route("/api/quarter-status")
@@ -522,6 +570,7 @@ def api_load_drr(qkey):
         "locked_months":         locked_months,
         "can_refill":       len(allowed_months) > 0 and sub.get("submitted", False),
         "filter_options": {"categories":cats,"sub_categories":subcats,"product_types":ptypes},
+        "flags": _get_flags(),
     })
 
 # ── API: Save draft ────────────────────────────────────────────────────────────
@@ -723,7 +772,10 @@ def admin_panel():
         user_name=_name(), today=datetime.date.today().strftime("%A, %d %B %Y"),
         quarters=QUARTERS, q_info=q_info,
         total_submitted=total_submitted, pending_refills=pending_refills,
-        activity_log=log, db_enabled=DB_ENABLED)
+        activity_log=log, db_enabled=DB_ENABLED,
+        ticker=_get_ticker_data(),          # ← NEW
+        flags=_get_flags(),                 # ← NEW
+    )
 
 @app.route("/admin/api/initiate-quarter", methods=["POST"])
 @_require_admin
@@ -809,6 +861,169 @@ def admin_download_member(qkey, email):
     buf = io.BytesIO(eb); buf.seek(0)
     return send_file(buf, as_attachment=True, download_name=sub.get("file","submission.xlsx"),
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+@app.route("/admin/api/set-ticker", methods=["POST"])
+@_require_admin
+def admin_set_ticker():
+    data    = request.json or {}
+    message = data.get("message", "").strip()
+    active  = bool(data.get("active", False))
+    style   = data.get("style", "info")
+    if style not in ("info", "warn", "success", "danger"):
+        style = "info"
+    _set_ticker_data(message, active, style)
+    _log("Ticker Updated", _name(),
+         ("Active: " if active else "Deactivated. ") + message[:60])
+    return jsonify({"status": "ok"})
+
+
+@app.route("/admin/api/set-feature-flag", methods=["POST"])
+@_require_admin
+def admin_set_feature_flag():
+    data    = request.json or {}
+    flag    = data.get("flag", "")
+    enabled = bool(data.get("enabled", True))
+    VALID   = {"load_sample_values", "download_template", "upload_excel_fill"}
+    if flag not in VALID:
+        return jsonify({"error": "Unknown flag"}), 400
+    _set_flag(flag, enabled)
+    _log("Feature Flag", _name(), f"{flag} → {'ON' if enabled else 'OFF'}")
+    return jsonify({"status": "ok", "flag": flag, "enabled": enabled})
+
+
+@app.route("/api/get-ticker")
+@_require_login
+def api_get_ticker():
+    """Polled by forecast page every 60 s to pick up live ticker changes."""
+    return jsonify(_get_ticker_data())
+
+
+@app.route("/api/upload-excel-fill/<qkey>", methods=["POST"])
+@_require_login
+def api_upload_excel_fill(qkey):
+    """
+    Members upload a filled-in Excel template.
+    The file's month columns are read and merged into their draft.
+    Only works when the upload_excel_fill feature flag is ON.
+    """
+    flags = _get_flags()
+    if not flags.get("upload_excel_fill", True):
+        return jsonify({"error": "Excel upload is currently disabled by admin."}), 403
+
+    if qkey not in QUARTERS:
+        return jsonify({"error": "Invalid quarter"}), 400
+
+    q = _q_get(qkey)
+    if not q.get("initiated"):
+        return jsonify({"error": "Quarter not initiated"}), 404
+
+    email = _email()
+    sub   = _sub_get(qkey, email)
+    if sub.get("submitted"):
+        return jsonify({"error": "Already submitted — cannot upload"}), 409
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    f = request.files["file"]
+    if not f.filename.lower().endswith((".xlsx", ".xls")):
+        return jsonify({"error": "Only .xlsx / .xls files are accepted"}), 400
+
+    months = QUARTERS[qkey]["months"]
+    drr_data = q.get("drr_data") or []
+    saved    = sub.get("data") or {}
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(f.read()), read_only=True, data_only=True)
+        ws = wb.active
+        all_rows_xl = list(ws.iter_rows(values_only=True))
+
+        if len(all_rows_xl) < 2:
+            return jsonify({"error": "File is empty or has no data rows"}), 422
+
+        # Find header row (first row where any cell matches a month name)
+        header_row_idx = None
+        month_col_map  = {}   # month_name → col_index
+        sku_col        = None
+
+        for ri, row in enumerate(all_rows_xl):
+            row_strs = [str(c or "").strip() for c in row]
+            matched  = {m: i for i, c in enumerate(row_strs) for m in months if c == m}
+            if matched:
+                header_row_idx = ri
+                month_col_map  = matched
+                # Find SKU column
+                for ci, cell in enumerate(row_strs):
+                    if cell.upper() in ("SKU", "PRODUCT NAME / SKU", "PRODUCT NAME"):
+                        sku_col = ci
+                        break
+                break
+
+        if not month_col_map:
+            return jsonify({
+                "error": f"Could not find month columns ({', '.join(months)}) in the uploaded file. "
+                         f"Please use the downloaded template."
+            }), 422
+
+        # Build a lookup: sku_value → row_id from drr_data
+        sku_to_rowid = {}
+        for prod in drr_data:
+            sku  = (prod.get("SKU") or "").strip().lower()
+            name = (prod.get("Product Name") or "").strip().lower()
+            if sku:  sku_to_rowid[sku]  = prod["_row_id"]
+            if name: sku_to_rowid[name] = prod["_row_id"]
+
+        # Parse data rows
+        filled  = 0
+        skipped = 0
+        merged  = dict(saved)   # start from existing draft
+
+        for row in all_rows_xl[header_row_idx + 1:]:
+            row_strs = [str(c or "").strip() for c in row]
+            if not any(row_strs):
+                continue
+
+            # Identify which product this row is
+            row_id = None
+            if sku_col is not None and sku_col < len(row_strs):
+                cell_val = row_strs[sku_col].lower()
+                row_id   = sku_to_rowid.get(cell_val)
+
+            if not row_id:
+                skipped += 1
+                continue
+
+            if row_id not in merged:
+                merged[row_id] = {}
+
+            for month, col_idx in month_col_map.items():
+                if col_idx < len(row):
+                    raw = row[col_idx]
+                    if raw is not None and str(raw).strip() != "":
+                        try:
+                            merged[row_id][month] = float(str(raw).replace(",", ""))
+                            filled += 1
+                        except ValueError:
+                            pass
+
+        if filled == 0:
+            return jsonify({
+                "error": "No numeric values found in the month columns. "
+                         "Ensure the file has values filled in the month columns."
+            }), 422
+
+        _sub_set(qkey, email, {"data": merged, "user_name": _name()})
+        return jsonify({
+            "status":  "merged",
+            "filled":  filled,
+            "skipped": skipped,
+            "message": f"Imported {filled} values from Excel ({skipped} rows skipped — SKU not matched).",
+        })
+
+    except Exception as e:
+        return jsonify({"error": f"Could not parse file: {str(e)}"}), 422
+
 
 # ── Excel helpers ──────────────────────────────────────────────────────────────
 def _parse_drr_excel(source):
