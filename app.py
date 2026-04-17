@@ -1115,7 +1115,12 @@ def api_insights_data():
     return jsonify(result)
 
 if __name__ == "__main__":
+
     print("\n  forecast.wbn — Wellbeing Nutrition v6")
+
     print("  http://localhost:5000\n")
+
     port = int(os.environ.get("PORT", 8000))
-app.run(host="0.0.0.0", port=port)
+
+    app.run(host="0.0.0.0", port=port)
+ 
