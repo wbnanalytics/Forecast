@@ -787,6 +787,8 @@ function buildTable(rows, userCh, allChs){
     });
     body.appendChild(tr);
   });
+  // Sync feature-flag buttons after table renders
+  _syncFlagButtons(isLocked);
 }
 
 function onCell(e){
@@ -851,6 +853,8 @@ function applyUIState(j){
   if(existingRefill && (j.refill_requested||!isLocked||cooldown)){
     existingRefill.remove();
   }
+  // Sync feature-flag buttons without recursion
+  _syncFlagButtons(j.submitted || isLocked);
 }
 
 /* ── Sync inputs → allRows ─────────────────────────────────────  */
@@ -1130,41 +1134,18 @@ setInterval(async () => {
   } catch(e) {}
 }, 60000);
 
-/* ── Show/hide new toolbar buttons when DRR loads ── */
-// Extend applyUIState to also manage the three new buttons.
-// We wrap it — the original function is still called first.
-const _origApplyUIState = applyUIState;
-function applyUIState(j) {
-  _origApplyUIState(j);
-
-  const flags     = j.flags || SERVER_FLAGS || {};
-  const submitted = j.submitted;
-
-  // Sample values button — only when not submitted
+/* ── Feature-flag button visibility helper ──────────────────────────────────
+   Called from within applyUIState() and buildTable() — NOT as wrappers.
+   (Wrappers using const _orig = fn; function fn(){} cause infinite recursion
+    because function declarations are hoisted before const assignments.) */
+function _syncFlagButtons(submittedOrLocked) {
+  const flags = SERVER_FLAGS || {};
   const bSample = document.getElementById('btnSample');
-  if (bSample) bSample.style.display = (flags.load_sample_values && !submitted) ? '' : 'none';
-
-  // Download template button
+  if (bSample) bSample.style.display = (flags.load_sample_values && !submittedOrLocked) ? '' : 'none';
   const bTpl = document.getElementById('btnTpl');
   if (bTpl) bTpl.style.display = flags.download_template ? '' : 'none';
-
-  // Upload excel button — only when not submitted
   const bUp = document.getElementById('btnUploadXl');
-  if (bUp) bUp.style.display = (flags.upload_excel_fill && !submitted) ? '' : 'none';
-}
-
-/* ── buildTable override: also show/hide after table is built ── */
-const _origBuildTable = buildTable;
-function buildTable(rows, userCh, allChs) {
-  _origBuildTable(rows, userCh, allChs);
-  // Show template and sample buttons whenever a quarter is loaded
-  const flags = SERVER_FLAGS || {};
-  const bTpl  = document.getElementById('btnTpl');
-  if (bTpl && flags.download_template) bTpl.style.display = '';
-  const bSample = document.getElementById('btnSample');
-  if (bSample && flags.load_sample_values && !isLocked) bSample.style.display = '';
-  const bUp = document.getElementById('btnUploadXl');
-  if (bUp && flags.upload_excel_fill && !isLocked) bUp.style.display = '';
+  if (bUp) bUp.style.display = (flags.upload_excel_fill && !submittedOrLocked) ? '' : 'none';
 }
 
 /* ── Load sample values ── */
