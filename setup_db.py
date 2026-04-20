@@ -45,7 +45,7 @@ except ImportError:
 print(f"\n  Connecting to database...")
 try:
     conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = False
+    conn.autocommit = True
     print("✓  Connected")
 except Exception as e:
     print(f"\n  ✗  Connection failed: {e}")
