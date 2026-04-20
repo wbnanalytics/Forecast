@@ -903,8 +903,20 @@ def api_get_ticker():
 def api_upload_excel_fill(qkey):
     """
     Members upload a filled-in Excel template.
-    The file's month columns are read and merged into their draft.
-    Only works when the upload_excel_fill feature flag is ON.
+    Only the columns that belong to the user's assigned channel are read.
+    This prevents cross-channel data contamination.
+
+    Supported Excel formats:
+      Format A (channel-specific template from /api/download-template):
+        Headers: Category | Sub-Category | Product Type | Product Name | SKU | April | May | June
+        → Plain month names, one channel per file (the member's own template).
+
+      Format B (master DRR sheet with all channels):
+        Headers: ... | D2C April | D2C May | Amazon April | Amazon May | ...
+        → Only columns matching "{member_channel} {month}" are read.
+
+      Format C (generic — any file with month names in headers):
+        If plain month names found without channel prefix → use as-is (same as Format A).
     """
     flags = _get_flags()
     if not flags.get("upload_excel_fill", True):
@@ -917,8 +929,9 @@ def api_upload_excel_fill(qkey):
     if not q.get("initiated"):
         return jsonify({"error": "Quarter not initiated"}), 404
 
-    email = _email()
-    sub   = _sub_get(qkey, email)
+    email     = _email()
+    is_adm    = _is_admin()
+    sub       = _sub_get(qkey, email)
     if sub.get("submitted"):
         return jsonify({"error": "Already submitted — cannot upload"}), 409
 
@@ -929,9 +942,14 @@ def api_upload_excel_fill(qkey):
     if not f.filename.lower().endswith((".xlsx", ".xls")):
         return jsonify({"error": "Only .xlsx / .xls files are accepted"}), 400
 
-    months = QUARTERS[qkey]["months"]
+    months   = QUARTERS[qkey]["months"]
     drr_data = q.get("drr_data") or []
     saved    = sub.get("data") or {}
+
+    # Determine the user's channel — only fill data for this channel
+    member_ch = CHANNEL_MAP.get(email) if not is_adm else None
+    # For admins: if no channel param provided, we still parse all plain month cols
+    ch_param  = request.args.get("channel") if is_adm else member_ch
 
     try:
         import openpyxl
@@ -942,31 +960,60 @@ def api_upload_excel_fill(qkey):
         if len(all_rows_xl) < 2:
             return jsonify({"error": "File is empty or has no data rows"}), 422
 
-        # Find header row (first row where any cell matches a month name)
+        # ── Step 1: Find header row ───────────────────────────────────────────
+        # We scan for a row that contains month names or "{channel} {month}" patterns.
         header_row_idx = None
-        month_col_map  = {}   # month_name → col_index
+        month_col_map  = {}   # month_name → col_index (only for the user's channel)
         sku_col        = None
 
         for ri, row in enumerate(all_rows_xl):
             row_strs = [str(c or "").strip() for c in row]
-            matched  = {m: i for i, c in enumerate(row_strs) for m in months if c == m}
-            if matched:
+
+            # ── Format B: channel-prefixed columns e.g. "Amazon April" ────────
+            # Build set of "{channel} {month}" patterns for the user's channel
+            if ch_param:
+                ch_month_map = {}
+                for idx, cell in enumerate(row_strs):
+                    for m in months:
+                        # Match "Amazon April", "amazon april", "AMAZON APRIL"
+                        if cell.lower() == (ch_param + " " + m).lower():
+                            ch_month_map[m] = idx
+                if ch_month_map:
+                    header_row_idx = ri
+                    month_col_map  = ch_month_map
+                    break
+
+            # ── Format A / C: plain month names ───────────────────────────────
+            plain_map = {}
+            for idx, cell in enumerate(row_strs):
+                for m in months:
+                    if cell.strip() == m:
+                        plain_map[m] = idx
+            if plain_map:
                 header_row_idx = ri
-                month_col_map  = matched
-                # Find SKU column
-                for ci, cell in enumerate(row_strs):
-                    if cell.upper() in ("SKU", "PRODUCT NAME / SKU", "PRODUCT NAME"):
-                        sku_col = ci
-                        break
+                month_col_map  = plain_map
                 break
 
         if not month_col_map:
-            return jsonify({
-                "error": f"Could not find month columns ({', '.join(months)}) in the uploaded file. "
-                         f"Please use the downloaded template."
-            }), 422
+            if ch_param:
+                hint = (f"Columns for channel '{ch_param}' not found. "
+                        f"Expected either plain month names ({', '.join(months)}) "
+                        f"or channel-prefixed names like '{ch_param} {months[0]}'. "
+                        f"Please use the downloaded template.")
+            else:
+                hint = (f"Could not find month columns ({', '.join(months)}) in the file. "
+                        f"Please use the downloaded template.")
+            return jsonify({"error": hint}), 422
 
-        # Build a lookup: sku_value → row_id from drr_data
+        # ── Step 2: Find header row and locate SKU column ─────────────────────
+        if header_row_idx is not None:
+            hdr = [str(c or "").strip() for c in all_rows_xl[header_row_idx]]
+            for ci, cell in enumerate(hdr):
+                if cell.upper() in ("SKU", "PRODUCT NAME / SKU", "PRODUCT NAME", "PRODUCT"):
+                    sku_col = ci
+                    break
+
+        # ── Step 3: Build SKU → row_id lookup from master drr_data ───────────
         sku_to_rowid = {}
         for prod in drr_data:
             sku  = (prod.get("SKU") or "").strip().lower()
@@ -974,21 +1021,33 @@ def api_upload_excel_fill(qkey):
             if sku:  sku_to_rowid[sku]  = prod["_row_id"]
             if name: sku_to_rowid[name] = prod["_row_id"]
 
-        # Parse data rows
+        # ── Step 4: Parse data rows — only fill for this channel ──────────────
         filled  = 0
         skipped = 0
-        merged  = dict(saved)   # start from existing draft
+        no_sku  = 0
+        merged  = dict(saved)   # preserve existing draft data
 
         for row in all_rows_xl[header_row_idx + 1:]:
             row_strs = [str(c or "").strip() for c in row]
             if not any(row_strs):
-                continue
+                continue   # skip blank rows
 
-            # Identify which product this row is
+            # Identify product by SKU
             row_id = None
             if sku_col is not None and sku_col < len(row_strs):
                 cell_val = row_strs[sku_col].lower()
                 row_id   = sku_to_rowid.get(cell_val)
+                if not row_id:
+                    # Fallback: try partial match (SKU might have extra spaces)
+                    for k, v in sku_to_rowid.items():
+                        if k and cell_val and (k in cell_val or cell_val in k):
+                            row_id = v; break
+
+            if not row_id:
+                # Try every cell in the row as a potential SKU
+                for cell_val in row_strs:
+                    row_id = sku_to_rowid.get(cell_val.lower())
+                    if row_id: break
 
             if not row_id:
                 skipped += 1
@@ -1002,23 +1061,37 @@ def api_upload_excel_fill(qkey):
                     raw = row[col_idx]
                     if raw is not None and str(raw).strip() != "":
                         try:
-                            merged[row_id][month] = float(str(raw).replace(",", ""))
+                            val = float(str(raw).replace(",", ""))
+                            # Only update this channel's month — do NOT overwrite
+                            # other channels' data that may already be in the draft
+                            merged[row_id][month] = val
                             filled += 1
                         except ValueError:
-                            pass
+                            pass   # ignore non-numeric cells silently
 
         if filled == 0:
             return jsonify({
-                "error": "No numeric values found in the month columns. "
-                         "Ensure the file has values filled in the month columns."
+                "error": (
+                    "No numeric values found for "
+                    + (f"channel '{ch_param}' " if ch_param else "")
+                    + f"in the month columns ({', '.join(months)}). "
+                    "Check that you filled in the correct columns in your Excel file."
+                )
             }), 422
 
         _sub_set(qkey, email, {"data": merged, "user_name": _name()})
+
+        ch_note = f" for channel '{ch_param}'" if ch_param else ""
         return jsonify({
             "status":  "merged",
             "filled":  filled,
             "skipped": skipped,
-            "message": f"Imported {filled} values from Excel ({skipped} rows skipped — SKU not matched).",
+            "channel": ch_param,
+            "message": (
+                f"Imported {filled} values{ch_note}. "
+                + (f"{skipped} rows skipped (SKU not matched). " if skipped else "")
+                + "Review and submit when ready."
+            ),
         })
 
     except Exception as e:
@@ -1334,9 +1407,6 @@ if __name__ == "__main__":
     print("\n  forecast.wbn — Wellbeing Nutrition v6")
 
     print("  http://localhost:5000\n")
-
-    print("DB_ENABLED:", DB_ENABLED)
-    print("DATABASE_URL:", bool(os.getenv("DATABASE_URL")))
 
     port = int(os.environ.get("PORT", 8000))
 
