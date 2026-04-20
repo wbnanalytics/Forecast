@@ -615,7 +615,28 @@ def api_submit(qkey):
     if errors: return jsonify({"error":"Validation failed","details":errors[:10]}), 422
 
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
-    buf  = io.BytesIO(); _save_submission_excel(rows, name, qkey, months, buf); buf.seek(0)
+
+    # Re-attach full DRR refs from master data so the downloaded Excel shows
+    # all channels' DRR values, not just the single _ref the frontend had.
+    member_ch = CHANNEL_MAP.get(email)
+    q_master  = _q_get(qkey)
+    drr_lookup = {p["_row_id"]: p.get("_drr", {}) for p in (q_master.get("drr_data") or [])}
+    for row in rows:
+        rid     = row.get("_row_id", "")
+        drr_all = drr_lookup.get(rid, {})
+        if drr_all:
+            # Always embed all channels as _refs for full export
+            row["_refs"] = {
+                ch: {dl: round(drr_all.get(ch, {}).get(dl, 0), 2) for dl in DRR_LABELS}
+                for ch in CHANNELS
+            }
+            # Also keep _ref for the member's own channel for backwards compat
+            if member_ch:
+                row["_ref"] = row["_refs"].get(member_ch, {})
+
+    buf = io.BytesIO()
+    _save_submission_excel(rows, name, qkey, months, buf, member_channel=member_ch)
+    buf.seek(0)
     eb   = buf.read()
 
     now  = datetime.datetime.now()
@@ -902,22 +923,28 @@ def api_get_ticker():
 @_require_login
 def api_upload_excel_fill(qkey):
     """
-    Members upload a filled-in Excel template.
-    Only the columns that belong to the user's assigned channel are read.
-    This prevents cross-channel data contamination.
+    Upload a filled Excel file and merge forecast values into the member's draft.
 
-    Supported Excel formats:
-      Format A (channel-specific template from /api/download-template):
-        Headers: Category | Sub-Category | Product Type | Product Name | SKU | April | May | June
-        → Plain month names, one channel per file (the member's own template).
+    Channel enforcement rule
+    ─────────────────────────
+    Every non-admin user has exactly one channel assigned via CHANNEL_MAP.
+    This function ONLY reads columns that belong to that channel.
 
-      Format B (master DRR sheet with all channels):
-        Headers: ... | D2C April | D2C May | Amazon April | Amazon May | ...
-        → Only columns matching "{member_channel} {month}" are read.
+    Accepted column formats for the member's channel (e.g. "Amazon"):
+      1. Plain month names ("April", "May", "June")
+         → used when the file is our own template (channel-neutral)
+      2. Prefixed month names ("Amazon April", "Amazon May", "Amazon June")
+         → used when the member uploads the master DRR sheet or any
+           file that labels columns with channel names
 
-      Format C (generic — any file with month names in headers):
-        If plain month names found without channel prefix → use as-is (same as Format A).
+    If the file contains columns for OTHER channels ("D2C April" etc.)
+    those columns are silently ignored — they are never written.
+
+    If no columns matching the member's channel are found at all →
+    the upload is rejected with a message listing exactly what column
+    names the file must contain.
     """
+    # ── Gate: feature flag ─────────────────────────────────────────────────────
     flags = _get_flags()
     if not flags.get("upload_excel_fill", True):
         return jsonify({"error": "Excel upload is currently disabled by admin."}), 403
@@ -929,167 +956,248 @@ def api_upload_excel_fill(qkey):
     if not q.get("initiated"):
         return jsonify({"error": "Quarter not initiated"}), 404
 
-    email     = _email()
-    is_adm    = _is_admin()
-    sub       = _sub_get(qkey, email)
+    email  = _email()
+    is_adm = _is_admin()
+    sub    = _sub_get(qkey, email)
+
     if sub.get("submitted"):
-        return jsonify({"error": "Already submitted — cannot upload"}), 409
+        return jsonify({"error": "Already submitted — cannot upload."}), 409
 
     if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+        return jsonify({"error": "No file uploaded."}), 400
 
     f = request.files["file"]
     if not f.filename.lower().endswith((".xlsx", ".xls")):
-        return jsonify({"error": "Only .xlsx / .xls files are accepted"}), 400
+        return jsonify({"error": "Only .xlsx / .xls files are accepted."}), 400
 
     months   = QUARTERS[qkey]["months"]
     drr_data = q.get("drr_data") or []
     saved    = sub.get("data") or {}
 
-    # Determine the user's channel — only fill data for this channel
-    member_ch = CHANNEL_MAP.get(email) if not is_adm else None
-    # For admins: if no channel param provided, we still parse all plain month cols
-    ch_param  = request.args.get("channel") if is_adm else member_ch
+    # ── Determine channel scope ────────────────────────────────────────────────
+    # Members: strictly their assigned channel.
+    # Admins: no restriction (None = accept any column format).
+    if is_adm:
+        member_ch = request.args.get("channel") or None  # admin may pass ?channel=
+    else:
+        member_ch = CHANNEL_MAP.get(email)
+        if not member_ch:
+            return jsonify({
+                "error": "You are not assigned to a channel. "
+                         "Ask admin to set your channel in CHANNEL_MAP."
+            }), 400
 
     try:
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(f.read()), read_only=True, data_only=True)
         ws = wb.active
-        all_rows_xl = list(ws.iter_rows(values_only=True))
+        all_xl_rows = list(ws.iter_rows(values_only=True))
 
-        if len(all_rows_xl) < 2:
-            return jsonify({"error": "File is empty or has no data rows"}), 422
+        if len(all_xl_rows) < 2:
+            return jsonify({"error": "File is empty or too small."}), 422
 
-        # ── Step 1: Find header row ───────────────────────────────────────────
-        # We scan for a row that contains month names or "{channel} {month}" patterns.
-        header_row_idx = None
-        month_col_map  = {}   # month_name → col_index (only for the user's channel)
-        sku_col        = None
+        # ── Step 1: Locate header row + build month_col_map ───────────────────
+        #
+        # month_col_map  maps  month_name → 0-based column index
+        #
+        # Search priority:
+        #   A. Channel-prefixed exact match  e.g. "Amazon April"
+        #      → only columns for member_ch are collected
+        #      → columns for other channels are NOT added to the map
+        #   B. Plain month name exact match  e.g. "April"
+        #      → template format; all months accepted regardless of channel
+        #        (the template is channel-neutral, so plain months are fine)
+        #
+        # If member_ch is set, we always prefer A over B for the SAME row.
+        # If A finds all months → we stop immediately (best case).
+        # If A finds some months → continue scanning in case more rows exist.
+        # If no A found at all → fall back to B.
 
-        for ri, row in enumerate(all_rows_xl):
-            row_strs = [str(c or "").strip() for c in row]
+        header_row_idx    = None
+        month_col_map     = {}       # final map used for data extraction
+        _best_score       = 0        # how many months matched so far
 
-            # ── Format B: channel-prefixed columns e.g. "Amazon April" ────────
-            # Build set of "{channel} {month}" patterns for the user's channel
-            if ch_param:
-                ch_month_map = {}
-                for idx, cell in enumerate(row_strs):
+        for ri, row in enumerate(all_xl_rows):
+            cells = [str(c or "").strip() for c in row]
+
+            # ── Priority A: channel-prefixed columns ───────────────────────────
+            if member_ch:
+                ch_map = {}
+                for ci, cell in enumerate(cells):
                     for m in months:
-                        # Match "Amazon April", "amazon april", "AMAZON APRIL"
-                        if cell.lower() == (ch_param + " " + m).lower():
-                            ch_month_map[m] = idx
-                if ch_month_map:
+                        # Case-insensitive: "amazon april" == "Amazon April"
+                        if cell.lower() == f"{member_ch} {m}".lower():
+                            ch_map[m] = ci
+                if len(ch_map) > _best_score:
+                    _best_score    = len(ch_map)
                     header_row_idx = ri
-                    month_col_map  = ch_month_map
-                    break
+                    month_col_map  = ch_map
+                    if len(ch_map) == len(months):
+                        break   # perfect match — stop scanning
 
-            # ── Format A / C: plain month names ───────────────────────────────
+            # ── Priority B: plain month names ─────────────────────────────────
             plain_map = {}
-            for idx, cell in enumerate(row_strs):
+            for ci, cell in enumerate(cells):
                 for m in months:
                     if cell.strip() == m:
-                        plain_map[m] = idx
-            if plain_map:
+                        plain_map[m] = ci
+            # Only use plain map if it beats what we have AND (no channel found yet
+            # OR this is the same row as the best channel match)
+            if len(plain_map) == len(months) and len(plain_map) > _best_score:
+                _best_score    = len(plain_map)
                 header_row_idx = ri
                 month_col_map  = plain_map
-                break
+                if not member_ch:
+                    break   # no channel scoping needed — stop
 
+        # ── Validation: did we find the right columns? ─────────────────────────
         if not month_col_map:
-            if ch_param:
-                hint = (f"Columns for channel '{ch_param}' not found. "
-                        f"Expected either plain month names ({', '.join(months)}) "
-                        f"or channel-prefixed names like '{ch_param} {months[0]}'. "
-                        f"Please use the downloaded template.")
+            if member_ch:
+                # Give the member exactly what column names they need to use
+                prefixed = ", ".join(f"{member_ch} {m}" for m in months)
+                plain    = ", ".join(months)
+                return jsonify({
+                    "error": (
+                        f"No columns found for your channel '{member_ch}'. "
+                        f"The file must contain either:\n"
+                        f"  • Plain month names: {plain}\n"
+                        f"  • Channel-prefixed names: {prefixed}\n"
+                        f"Please download the template from the forecast page "
+                        f"and fill in the correct columns."
+                    )
+                }), 422
             else:
-                hint = (f"Could not find month columns ({', '.join(months)}) in the file. "
-                        f"Please use the downloaded template.")
-            return jsonify({"error": hint}), 422
+                return jsonify({
+                    "error": (
+                        f"Could not find month columns ({', '.join(months)}) in the file. "
+                        "Please download the template and fill that in."
+                    )
+                }), 422
 
-        # ── Step 2: Find header row and locate SKU column ─────────────────────
+        missing_months = [m for m in months if m not in month_col_map]
+        if missing_months:
+            if member_ch:
+                missing_cols = " / ".join(
+                    f"'{member_ch} {m}' or '{m}'" for m in missing_months
+                )
+                return jsonify({
+                    "error": (
+                        f"Columns missing for channel '{member_ch}': {missing_cols}. "
+                        f"Please make sure all {len(months)} month columns are present."
+                    )
+                }), 422
+            else:
+                return jsonify({
+                    "error": f"Some month columns are missing: {', '.join(missing_months)}."
+                }), 422
+
+        # ── Step 2: Find SKU column in the header row ─────────────────────────
+        sku_col = None
         if header_row_idx is not None:
-            hdr = [str(c or "").strip() for c in all_rows_xl[header_row_idx]]
+            hdr = [str(c or "").strip() for c in all_xl_rows[header_row_idx]]
             for ci, cell in enumerate(hdr):
                 if cell.upper() in ("SKU", "PRODUCT NAME / SKU", "PRODUCT NAME", "PRODUCT"):
                     sku_col = ci
                     break
 
-        # ── Step 3: Build SKU → row_id lookup from master drr_data ───────────
-        sku_to_rowid = {}
+        # ── Step 3: Build SKU / Product Name → row_id lookup ─────────────────
+        sku_to_rowid  = {}
+        name_to_rowid = {}
         for prod in drr_data:
-            sku  = (prod.get("SKU") or "").strip().lower()
-            name = (prod.get("Product Name") or "").strip().lower()
-            if sku:  sku_to_rowid[sku]  = prod["_row_id"]
-            if name: sku_to_rowid[name] = prod["_row_id"]
+            sku  = (prod.get("SKU")          or "").strip()
+            name = (prod.get("Product Name") or "").strip()
+            rid  = prod["_row_id"]
+            if sku:  sku_to_rowid[sku.lower()]   = rid
+            if name: name_to_rowid[name.lower()]  = rid
 
-        # ── Step 4: Parse data rows — only fill for this channel ──────────────
+        # ── Step 4: Parse data rows — channel-scoped ──────────────────────────
+        SKIP_PATTERNS = {"instruction", "do not edit", "(example)", "fill in",
+                         "instructions:", "note:"}
+
         filled  = 0
         skipped = 0
-        no_sku  = 0
-        merged  = dict(saved)   # preserve existing draft data
+        merged  = dict(saved)   # start from existing draft, preserve other channels
 
-        for row in all_rows_xl[header_row_idx + 1:]:
-            row_strs = [str(c or "").strip() for c in row]
-            if not any(row_strs):
-                continue   # skip blank rows
+        for row in all_xl_rows[header_row_idx + 1:]:
+            cells = [str(c or "").strip() for c in row]
 
-            # Identify product by SKU
+            # Skip blank rows
+            if not any(cells):
+                continue
+
+            # Skip instruction / note rows
+            first_cell = cells[0].lower() if cells else ""
+            if any(p in first_cell for p in SKIP_PATTERNS):
+                continue
+
+            # ── Identify product by SKU (three-level matching) ─────────────────
             row_id = None
-            if sku_col is not None and sku_col < len(row_strs):
-                cell_val = row_strs[sku_col].lower()
-                row_id   = sku_to_rowid.get(cell_val)
-                if not row_id:
-                    # Fallback: try partial match (SKU might have extra spaces)
-                    for k, v in sku_to_rowid.items():
-                        if k and cell_val and (k in cell_val or cell_val in k):
-                            row_id = v; break
 
+            if sku_col is not None and sku_col < len(cells):
+                sku_val = cells[sku_col].lower()
+                # Level 1: exact match
+                row_id = sku_to_rowid.get(sku_val) or name_to_rowid.get(sku_val)
+                # Level 2: partial substring match
+                if not row_id and sku_val:
+                    for k, v in sku_to_rowid.items():
+                        if k and sku_val and (k in sku_val or sku_val in k):
+                            row_id = v
+                            break
+
+            # Level 3: scan every cell in the row
             if not row_id:
-                # Try every cell in the row as a potential SKU
-                for cell_val in row_strs:
-                    row_id = sku_to_rowid.get(cell_val.lower())
-                    if row_id: break
+                for cell_val in cells:
+                    cv = cell_val.lower()
+                    row_id = (sku_to_rowid.get(cv) or name_to_rowid.get(cv))
+                    if row_id:
+                        break
 
             if not row_id:
                 skipped += 1
                 continue
 
+            # ── Write ONLY the month values from month_col_map ────────────────
+            # month_col_map already contains only the member's channel columns
+            # (or plain month columns from a neutral template).
+            # Columns for other channels are not in this map → never written.
             if row_id not in merged:
                 merged[row_id] = {}
 
             for month, col_idx in month_col_map.items():
                 if col_idx < len(row):
                     raw = row[col_idx]
-                    if raw is not None and str(raw).strip() != "":
+                    if raw is not None and str(raw).strip() not in ("", "-", "—", "0.0", "0"):
                         try:
                             val = float(str(raw).replace(",", ""))
-                            # Only update this channel's month — do NOT overwrite
-                            # other channels' data that may already be in the draft
                             merged[row_id][month] = val
                             filled += 1
                         except ValueError:
-                            pass   # ignore non-numeric cells silently
+                            pass   # non-numeric — skip silently
 
         if filled == 0:
+            ch_hint = f" for channel '{member_ch}'" if member_ch else ""
             return jsonify({
                 "error": (
-                    "No numeric values found for "
-                    + (f"channel '{ch_param}' " if ch_param else "")
-                    + f"in the month columns ({', '.join(months)}). "
-                    "Check that you filled in the correct columns in your Excel file."
+                    f"No numeric values were found{ch_hint} in the month columns "
+                    f"({', '.join(months)}). "
+                    "Make sure you've filled in the forecast values and saved the file."
                 )
             }), 422
 
         _sub_set(qkey, email, {"data": merged, "user_name": _name()})
 
-        ch_note = f" for channel '{ch_param}'" if ch_param else ""
+        ch_label     = f" [{member_ch}]" if member_ch else ""
+        products_hit = filled // max(len(months), 1)
         return jsonify({
             "status":  "merged",
             "filled":  filled,
             "skipped": skipped,
-            "channel": ch_param,
+            "channel": member_ch,
             "message": (
-                f"Imported {filled} values{ch_note}. "
-                + (f"{skipped} rows skipped (SKU not matched). " if skipped else "")
+                f"Imported {filled} values{ch_label} across "
+                f"~{products_hit} product{'s' if products_hit != 1 else ''}. "
+                + (f"{skipped} row{'s' if skipped != 1 else ''} skipped "
+                   f"(SKU not found in master list). " if skipped else "")
                 + "Review and submit when ready."
             ),
         })
@@ -1097,7 +1205,7 @@ def api_upload_excel_fill(qkey):
     except Exception as e:
         return jsonify({"error": f"Could not parse file: {str(e)}"}), 422
 
-
+# ── END CHANNEL UPLOAD FIX ────────────────────────────────────────────────────
 # ── Excel helpers ──────────────────────────────────────────────────────────────
 def _parse_drr_excel(source):
     import openpyxl
@@ -1140,71 +1248,316 @@ def _parse_drr_excel(source):
     return rows, channels_found
 
 def _create_quarter_template(qkey, dest):
+    """
+    Generate a master forecast template that:
+      • Includes ALL products from the initiated DRR data (with product info pre-filled)
+      • Has blank forecast month columns (editable by members)
+      • Does NOT include DRR columns — template is for filling, not reference
+      • Columns: Category | Sub-Category | Product Type | Product Name | SKU |
+                 Live/Not Live | Sub Product Type | <Month1> | <Month2> | <Month3>
+      • If no DRR data is loaded yet (quarter not initiated), generates a
+        blank schema-only template with sample placeholder rows.
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-    months = QUARTERS[qkey]["months"]
-    bdr = Border(**{s:Side(style="thin",color="CCCCCC") for s in ["left","right","top","bottom"]})
-    wb = Workbook(); ws = wb.active; ws.title="Forecast "+qkey
-    headers = ["Category","Sub-Category","Product Type","Product Name","SKU"]+months
-    for ci, h in enumerate(headers,1):
-        cell = ws.cell(row=1,column=ci,value=h)
-        cell.font = Font(bold=True,color="FFFFFF",name="Calibri",size=10)
-        cell.fill = PatternFill(start_color="1B4332",end_color="1B4332",fill_type="solid")
-        cell.alignment = Alignment(horizontal="center",vertical="center"); cell.border=bdr
-    ws.column_dimensions["A"].width=18; ws.column_dimensions["B"].width=18
-    ws.column_dimensions["C"].width=18; ws.column_dimensions["D"].width=28
-    ws.column_dimensions["E"].width=16
-    for i in range(6,len(headers)+1): ws.column_dimensions[get_column_letter(i)].width=14
-    ws.row_dimensions[1].height=30; ws.freeze_panes="F2"; wb.save(dest)
 
-def _save_submission_excel(rows, username, qkey, months, dest):
+    months   = QUARTERS[qkey]["months"]
+    bdr_hdr  = Border(**{s: Side(style="thin", color="FFFFFF") for s in ["left","right","top","bottom"]})
+    bdr_data = Border(**{s: Side(style="thin", color="D1D5DB") for s in ["left","right","top","bottom"]})
+    bdr_mon  = Border(**{s: Side(style="thin", color="6EE7B7") for s in ["left","right","top","bottom"]})
+
+    # Product info columns (always present, pre-filled from DRR master)
+    PROD_COLS = ["Category", "Sub-Category", "Product Type", "Product Name",
+                 "SKU", "Live/Not Live", "Sub Product Type"]
+    all_headers = PROD_COLS + months
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Forecast " + qkey
+
+    # ── Row 1: Group labels ────────────────────────────────────────────────────
+    # Merge product info columns under one label, months under another
+    ws.merge_cells(start_row=1, start_column=1,
+                   end_row=1, end_column=len(PROD_COLS))
+    hdr_prod = ws.cell(row=1, column=1, value="PRODUCT INFO (do not edit)")
+    hdr_prod.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+    hdr_prod.fill      = PatternFill(start_color="1B4332", end_color="1B4332", fill_type="solid")
+    hdr_prod.alignment = Alignment(horizontal="center", vertical="center")
+    hdr_prod.border    = bdr_hdr
+
+    ws.merge_cells(start_row=1, start_column=len(PROD_COLS)+1,
+                   end_row=1, end_column=len(all_headers))
+    hdr_mon = ws.cell(row=1, column=len(PROD_COLS)+1,
+                      value="FORECAST — " + QUARTERS[qkey]["label"] + "  ← fill these in")
+    hdr_mon.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+    hdr_mon.fill      = PatternFill(start_color="40916C", end_color="40916C", fill_type="solid")
+    hdr_mon.alignment = Alignment(horizontal="center", vertical="center")
+    hdr_mon.border    = bdr_hdr
+    ws.row_dimensions[1].height = 22
+
+    # ── Row 2: Column headers ──────────────────────────────────────────────────
+    for ci, h in enumerate(all_headers, 1):
+        cell = ws.cell(row=2, column=ci, value=h)
+        is_month = h in months
+        cell.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+        cell.fill      = PatternFill(
+            start_color="40916C" if is_month else "2D6A4F",
+            end_color  ="40916C" if is_month else "2D6A4F",
+            fill_type  ="solid"
+        )
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = bdr_hdr
+    ws.row_dimensions[2].height = 28
+
+    # ── Data rows — load from master DRR if available ─────────────────────────
+    # We pull from the in-memory (or DB) quarter data so the template always
+    # reflects the actual product list that was uploaded by admin.
+    q        = _q_get(qkey)
+    drr_data = q.get("drr_data") or []
+
+    if drr_data:
+        data_rows = drr_data
+    else:
+        # Quarter not yet initiated — write 3 example rows so members see the format
+        data_rows = [
+            {"Category":"(Example)","Sub-Category":"","Product Type":"",
+             "Product Name":"Product A","SKU":"SKU-001",
+             "Live/Not Live":"Live","Sub Product Type":""},
+            {"Category":"(Example)","Sub-Category":"","Product Type":"",
+             "Product Name":"Product B","SKU":"SKU-002",
+             "Live/Not Live":"Live","Sub Product Type":""},
+            {"Category":"(Example)","Sub-Category":"","Product Type":"",
+             "Product Name":"Product C","SKU":"SKU-003",
+             "Live/Not Live":"Live","Sub Product Type":""},
+        ]
+
+    for ri, prod in enumerate(data_rows, 3):
+        even = ri % 2 == 0
+        for ci, col in enumerate(all_headers, 1):
+            is_month = col in months
+            if is_month:
+                val    = ""   # blank — member fills this in
+                bg     = "F0FFF4" if even else "DCFCE7"
+                cell   = ws.cell(row=ri, column=ci, value=val)
+                cell.border = bdr_mon
+                # Add input hint via number format
+                cell.number_format = "#,##0.00"
+            else:
+                val  = prod.get(col, "")
+                bg   = "F8FAF9" if even else "FFFFFF"
+                cell = ws.cell(row=ri, column=ci, value=val)
+                cell.protection = cell.protection  # read-only hint (visual only)
+                cell.border = bdr_data
+            cell.fill      = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+            cell.alignment = Alignment(horizontal="center" if is_month else "left",
+                                       vertical="center")
+            cell.font      = Font(name="Calibri", size=9,
+                                  bold=(col == "Product Name"))
+        ws.row_dimensions[ri].height = 18
+
+    # ── Column widths ──────────────────────────────────────────────────────────
+    widths = {"Category":16,"Sub-Category":16,"Product Type":16,
+              "Product Name":28,"SKU":16,"Live/Not Live":12,"Sub Product Type":14}
+    for ci, col in enumerate(all_headers, 1):
+        ltr = get_column_letter(ci)
+        ws.column_dimensions[ltr].width = widths.get(col, 14)
+
+    # Freeze panes: fix product info columns, allow horizontal scroll on months
+    ws.freeze_panes = get_column_letter(len(PROD_COLS)+1) + "3"
+
+    # ── Instructions row at the bottom ────────────────────────────────────────
+    note_row = len(data_rows) + 4
+    ws.merge_cells(start_row=note_row, start_column=1,
+                   end_row=note_row, end_column=len(all_headers))
+    note = ws.cell(row=note_row, column=1,
+                   value=("INSTRUCTIONS: Fill in the " + ", ".join(months) +
+                          " columns (highlighted green) with your forecast quantities. "
+                          "Do not edit the product info columns. "
+                          "Save and upload via the 'Upload Excel' button on the forecast page."))
+    note.font      = Font(name="Calibri", size=9, italic=True, color="6B7280")
+    note.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    ws.row_dimensions[note_row].height = 32
+
+    wb.save(dest)
+
+
+def _save_submission_excel(rows, username, qkey, months, dest, member_channel=None):
+    """
+    Generate the submission Excel saved at submit time.
+
+    Layout (member download):
+      PRODUCT INFO | DRR — <channel> (5 cols) | FORECAST (month cols)
+
+    The `rows` list comes from the frontend JS (confirmSubmit → POST /api/submit).
+    Each row has:
+      _ref   = {label: value}    if member or admin-viewing-channel
+      _refs  = {ch: {label: v}}  if admin all-channels view
+
+    We use all available DRR refs:
+      - If _ref present → show that channel's DRR (correct for member)
+      - If _refs present → show all channels' DRR side-by-side
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-    bdr = Border(**{s:Side(style="thin",color="DEE2E6") for s in ["left","right","top","bottom"]})
-    wb = Workbook(); ws = wb.active; ws.title="Forecast Submission"
-    total_cols = len(BASE_COLS_DRR)+len(DRR_LABELS)+len(months)
-    ws.merge_cells(start_row=1,start_column=1,end_row=1,end_column=total_cols)
-    tc = ws.cell(row=1,column=1,
-                 value="Forecast — "+qkey+" — "+username+" — "+datetime.date.today().strftime("%d %b %Y"))
-    tc.font=Font(bold=True,color="FFFFFF",name="Calibri",size=12)
-    tc.fill=PatternFill(start_color="1B4332",end_color="1B4332",fill_type="solid")
-    tc.alignment=Alignment(horizontal="left",vertical="center",indent=1)
-    ws.row_dimensions[1].height=28
-    headers=BASE_COLS_DRR+DRR_LABELS+months
-    for ci,h in enumerate(headers,1):
-        cell=ws.cell(row=2,column=ci,value=h)
-        cell.font=Font(bold=True,color="FFFFFF",name="Calibri",size=9)
-        is_drr=(ci>len(BASE_COLS_DRR) and ci<=len(BASE_COLS_DRR)+len(DRR_LABELS))
-        is_month=(ci>len(BASE_COLS_DRR)+len(DRR_LABELS))
-        bg="2D6A4F" if is_drr else ("40916C" if is_month else "1B4332")
-        cell.fill=PatternFill(start_color=bg,end_color=bg,fill_type="solid")
-        cell.alignment=Alignment(horizontal="center",vertical="center"); cell.border=bdr
-    ws.row_dimensions[2].height=28
-    for ri,row in enumerate(rows,3):
-        even=ri%2==0
-        ref = row.get("_ref") or row.get("_refs",{}).get(CHANNELS[0],{}) or {}
-        all_vals=(
-            [row.get(h,"") for h in BASE_COLS_DRR]+
-            [ref.get(dl,"") for dl in DRR_LABELS]+
-            [row.get(m,"") for m in months]
-        )
-        for ci,val in enumerate(all_vals,1):
-            cell=ws.cell(row=ri,column=ci,value=val)
-            cell.alignment=Alignment(horizontal="center",vertical="center"); cell.border=bdr
-            is_drr=(ci>len(BASE_COLS_DRR) and ci<=len(BASE_COLS_DRR)+len(DRR_LABELS))
-            is_month=(ci>len(BASE_COLS_DRR)+len(DRR_LABELS))
-            if ci<=len(BASE_COLS_DRR): bg="D8F3DC"
-            elif is_drr: bg="E0E7FF" if even else "EEF2FF"
-            else: bg="DCFCE7" if even else "F0FFF4"
-            cell.fill=PatternFill(start_color=bg,end_color=bg,fill_type="solid")
-            cell.font=Font(name="Calibri",size=9)
-        ws.row_dimensions[ri].height=18
-    for ci in range(1,len(BASE_COLS_DRR)+1): ws.column_dimensions[get_column_letter(ci)].width=16
-    for ci in range(len(BASE_COLS_DRR)+1,len(BASE_COLS_DRR)+len(DRR_LABELS)+1): ws.column_dimensions[get_column_letter(ci)].width=14
-    for ci in range(len(BASE_COLS_DRR)+len(DRR_LABELS)+1,len(headers)+1): ws.column_dimensions[get_column_letter(ci)].width=14
-    ws.freeze_panes=get_column_letter(len(BASE_COLS_DRR)+1)+"3"; wb.save(dest)
+
+    bdr = Border(**{s: Side(style="thin", color="DEE2E6")
+                    for s in ["left","right","top","bottom"]})
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Forecast Submission"
+
+    # Detect whether we have single-channel (_ref) or multi-channel (_refs) rows
+    sample_row    = rows[0] if rows else {}
+    has_single_ch = "_ref"  in sample_row
+    has_multi_ch  = "_refs" in sample_row
+    drr_channels  = list(sample_row.get("_refs", {}).keys()) if has_multi_ch else []
+
+    # Build column list
+    if has_multi_ch and drr_channels:
+        # All channels side-by-side
+        drr_header_groups = drr_channels      # e.g. ["D2C","Amazon",...]
+        n_drr_cols = len(drr_channels) * len(DRR_SHORT)
+    elif has_single_ch:
+        # Single channel (member view)
+        ch_label = member_channel or "Channel"
+        drr_header_groups = [ch_label]
+        n_drr_cols = len(DRR_SHORT)
+    else:
+        drr_header_groups = []
+        n_drr_cols = 0
+
+    total_cols = len(BASE_COLS_DRR) + n_drr_cols + len(months)
+
+    # ── Row 1: Title bar ────────────────────────────────────────────────────────
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+    tc = ws.cell(row=1, column=1,
+                 value="Forecast — " + qkey + " — " + username +
+                       " — " + datetime.date.today().strftime("%d %b %Y"))
+    tc.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=12)
+    tc.fill      = PatternFill(start_color="1B4332", end_color="1B4332", fill_type="solid")
+    tc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[1].height = 28
+
+    # ── Row 2: Group labels ─────────────────────────────────────────────────────
+    col = 1
+    def _mhdr(r, c, span, text, bg, txt_color="FFFFFF"):
+        if span > 1:
+            ws.merge_cells(start_row=r, start_column=c,
+                           end_row=r, end_column=c+span-1)
+        cell = ws.cell(row=r, column=c, value=text)
+        cell.font      = Font(bold=True, color=txt_color, name="Calibri", size=9)
+        cell.fill      = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = bdr
+
+    _mhdr(2, col, len(BASE_COLS_DRR), "PRODUCT INFO", "1B4332")
+    col += len(BASE_COLS_DRR)
+
+    if drr_header_groups:
+        for ch in drr_header_groups:
+            _mhdr(2, col, len(DRR_SHORT), "DRR — " + ch, "3730A3")
+            col += len(DRR_SHORT)
+
+    _mhdr(2, col, len(months), "FORECAST — " + QUARTERS[qkey]["label"], "40916C")
+    ws.row_dimensions[2].height = 22
+
+    # ── Row 3: Column headers ────────────────────────────────────────────────────
+    col = 1
+    # Product info headers
+    for h in BASE_COLS_DRR:
+        cell = ws.cell(row=3, column=col, value=h)
+        cell.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=9)
+        cell.fill      = PatternFill(start_color="2D6A4F", end_color="2D6A4F", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = bdr
+        col += 1
+
+    # DRR headers
+    if drr_header_groups:
+        for ch in drr_header_groups:
+            for short_lbl in DRR_SHORT:
+                cell = ws.cell(row=3, column=col, value=short_lbl)
+                cell.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=9)
+                cell.fill      = PatternFill(start_color="4338CA", end_color="4338CA", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border    = bdr
+                col += 1
+
+    # Month headers
+    for m in months:
+        cell = ws.cell(row=3, column=col, value=m)
+        cell.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=9)
+        cell.fill      = PatternFill(start_color="40916C", end_color="40916C", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = bdr
+        col += 1
+    ws.row_dimensions[3].height = 26
+
+    # ── Data rows ────────────────────────────────────────────────────────────────
+    for ri, row in enumerate(rows, 4):
+        even = ri % 2 == 0
+
+        # Product info
+        col = 1
+        for h in BASE_COLS_DRR:
+            cell = ws.cell(row=ri, column=col, value=row.get(h, ""))
+            cell.fill      = PatternFill(start_color="D8F3DC" if even else "E8F5EC",
+                                         end_color="D8F3DC" if even else "E8F5EC",
+                                         fill_type="solid")
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+            cell.border    = bdr
+            cell.font      = Font(name="Calibri", size=9)
+            col += 1
+
+        # DRR values
+        if drr_header_groups:
+            for ch in drr_header_groups:
+                if has_multi_ch:
+                    refs = row.get("_refs", {}).get(ch, {})
+                else:
+                    refs = row.get("_ref", {})
+                for full_lbl in DRR_LABELS:
+                    v    = refs.get(full_lbl, "")
+                    cell = ws.cell(row=ri, column=col,
+                                   value=round(float(v), 2) if v else "")
+                    cell.fill      = PatternFill(start_color="E0E7FF" if even else "EEF2FF",
+                                                 end_color="E0E7FF" if even else "EEF2FF",
+                                                 fill_type="solid")
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    cell.border    = bdr
+                    cell.font      = Font(name="Calibri", size=9)
+                    col += 1
+
+        # Forecast month values
+        for m in months:
+            v    = row.get(m, "")
+            cell = ws.cell(row=ri, column=col, value=v if v != "" else "")
+            cell.fill      = PatternFill(start_color="DCFCE7" if even else "F0FFF4",
+                                         end_color="DCFCE7" if even else "F0FFF4",
+                                         fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border    = bdr
+            cell.font      = Font(name="Calibri", size=9)
+            if v != "":
+                cell.number_format = "#,##0.00"
+            col += 1
+
+        ws.row_dimensions[ri].height = 18
+
+    # ── Column widths ────────────────────────────────────────────────────────────
+    for ci in range(1, len(BASE_COLS_DRR)+1):
+        ws.column_dimensions[get_column_letter(ci)].width = 16
+    drr_start = len(BASE_COLS_DRR)+1
+    for ci in range(drr_start, drr_start + n_drr_cols):
+        ws.column_dimensions[get_column_letter(ci)].width = 8
+    for ci in range(drr_start + n_drr_cols, total_cols+1):
+        ws.column_dimensions[get_column_letter(ci)].width = 14
+
+    ws.freeze_panes = get_column_letter(len(BASE_COLS_DRR)+1) + "4"
+    wb.save(dest)
 
 def _export_quarter_excel(qkey, q, dest):
     from openpyxl import Workbook
