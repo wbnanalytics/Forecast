@@ -1335,6 +1335,9 @@ if __name__ == "__main__":
 
     print("  http://localhost:5000\n")
 
+    print("DB_ENABLED:", DB_ENABLED)
+    print("DATABASE_URL:", bool(os.getenv("DATABASE_URL")))
+
     port = int(os.environ.get("PORT", 8000))
 
     app.run(host="0.0.0.0", port=port)

@@ -374,3 +374,10 @@ if DB_ENABLED:
         print(f"  [DB] WARNING: Could not initialise DB — {e}")
         print("  [DB] Falling back to in-memory mode.")
         DB_ENABLED = False
+if DB_ENABLED:
+    try:
+        init_db()
+        print("✅ DB CONNECTED SUCCESSFULLY")
+    except Exception as e:
+        print(f"❌ DB ERROR: {e}")
+        DB_ENABLED = False
