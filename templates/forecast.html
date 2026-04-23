@@ -1261,45 +1261,10 @@ async function doUploadExcel() {
     const r = await fetch('/api/upload-excel-fill/' + curQ, { method: 'POST', body: fd });
     const j = await r.json();
     if (!r.ok) { toast(j.error || 'Import failed.', 'e', 6000); return; }
-    
     if (j.status === 'merged') {
-
-        // Map imported data by SKU
-        const map = {};
-        (j.rows || []).forEach(r => {
-          if (r.SKU) map[r.SKU] = r;
-        });
-
-        // Update ONLY based on Excel
-        allRows.forEach(row => {
-          const imp = map[row.SKU] || {};
-
-          months.forEach(m => {
-            if (imp.hasOwnProperty(m)) {
-              const v = parseFloat(imp[m]);
-
-              // ✅ If blank or invalid → 0
-              row[m] = isNaN(v) ? 0 : v;
-            }
-            // ❗ If Excel didn’t send this SKU/month → leave existing value as is
-          });
-        });
-
-        // Update UI inputs
-        document.querySelectorAll('#gridBody input[data-month]').forEach(inp => {
-          const ri = parseInt(inp.dataset.ri);
-          const m  = inp.dataset.month;
-          inp.value = allRows[ri][m] ?? 0;
-          inp.classList.remove('err');
-        });
-
-        // Recalculate totals
-        const totals = calculateTotals(allRows, months, curDrrCh);
-        renderTotalsRow(totals);
-
-        toast('Excel imported — blanks treated as 0, values updated.', 's', 5000);
-      }
-
+      await loadDRR(curQ);
+      toast(j.message || 'Excel imported.', 's', 5000);
+    }
   } catch(e) { toast('Upload error: ' + e.message, 'e'); }
   finally { spin.hide(); }
 }
