@@ -482,7 +482,7 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
   <p id="emptyDesc">No quarter has been started yet. The admin will initiate a quarter and it will automatically appear here.</p>
 </div>
 <div class="table-wrap" id="tableWrap" style="display:none">
-  <table class="grid"><thead id="gridHead"></thead><tbody id="gridBody"></tbody></table>
+  <table class="grid"><thead id="gridHead"></thead><tbody id="gridBody"></tbody><tfoot id="forecastTableFooter"></tfoot></table>
 </div>
 
 <!-- Statusbar -->
@@ -621,6 +621,8 @@ async function loadDRR(qkey){
     }
     populateFilters();
     buildTable(allRows, userCh, allChs);
+    const totals = calculateTotals(allRows, months, userCh || curDrrCh);
+renderTotalsRow(totals);
     applyUIState(j);
     setStatus('Loaded '+allRows.length+' products for '+QUARTERS[qkey].label
       +(userCh?' — Channel: '+userCh:'')+(isLocked?' — submitted.':' — ready to fill.'));
@@ -635,6 +637,41 @@ async function loadDRR(qkey){
     }
   }catch(e){ toast('Error: '+e.message,'e'); }
   finally{ spin.hide(); }
+}
+
+function onCellChange() {
+  const totals = calculateTotals(allRows, months, curDrrCh);
+  renderTotalsRow(totals);
+}
+
+function renderTotalsRow(totals) {
+  const tfoot = document.getElementById('forecastTableFooter');
+  if (!tfoot) return;
+
+  let html = `<tr class="totals-row">
+  <td colspan="${fixedCols + drrCols}"><strong>Total</strong></td>`;
+
+  months.forEach(m => {
+    html += `<td><strong>${totals[m]}</strong></td>`;
+  });
+
+  html += `</tr>`;
+  tfoot.innerHTML = html;
+}
+
+function calculateTotals(rows, months, channel) {
+  const totals = {};
+  
+  months.forEach(m => totals[m] = 0);
+
+  rows.forEach(row => {
+    months.forEach(m => {
+      const val = Number(row.forecast?.[channel]?.[m] || 0);
+      totals[m] += val;
+    });
+  });
+
+  return totals;
 }
 
 /* ── DRR channel tab selector ─────────────────────────────────── */
@@ -775,7 +812,13 @@ function buildTable(rows, userCh, allChs){
       if(isLocked){
         inp.disabled=true;
       } else {
-        inp.addEventListener('change',onCell);
+        inp.addEventListener('input', (e) => {
+  const v = e.target.value.trim().replace(',', '');
+  e.target.classList.toggle('err', v !== '' && isNaN(parseFloat(v)));
+
+  onCell(e);
+  onCellChange(); // ✅ live totals update
+});
         inp.addEventListener('focus',e=>e.target.select());
         inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();e.target.blur();} });
         inp.addEventListener('input',e=>{

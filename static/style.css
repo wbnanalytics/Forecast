@@ -10,6 +10,19 @@ body {
     box-shadow: 0 4px 24px rgba(0,0,0,.08);
     width: 400px; animation: fadeIn .7s ease;
 }
+
+.totals-row {
+  background: #f1f3f5;
+  font-weight: 600;
+  position: sticky;
+  bottom: 0;
+  z-index: 25;
+}
+
+.totals-row td {
+  border-top: 2px solid var(--g700);
+}
+
 .logo { width: 140px; margin-bottom: 24px; }
 h1 { font-size: 22px; color: #1a202c; margin-bottom: 6px; font-weight: 700; }
 .highlight { color: #2D6A4F; }
