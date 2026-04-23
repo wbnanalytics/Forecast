@@ -1261,10 +1261,49 @@ async function doUploadExcel() {
     const r = await fetch('/api/upload-excel-fill/' + curQ, { method: 'POST', body: fd });
     const j = await r.json();
     if (!r.ok) { toast(j.error || 'Import failed.', 'e', 6000); return; }
+    
     if (j.status === 'merged') {
-      await loadDRR(curQ);
-      toast(j.message || 'Excel imported.', 's', 5000);
+
+      // Optional confirmation (recommended)
+      if (!confirm('This will replace all existing values. Continue?')) return;
+
+      // ✅ STEP 1: Reset all rows to 0
+      allRows.forEach(row => {
+        months.forEach(m => {
+          row[m] = 0;
+        });
+      });
+
+      // ✅ STEP 2: Map imported data by SKU (safer than index)
+      const map = {};
+      (j.rows || []).forEach(r => {
+        if (r.SKU) map[r.SKU] = r;
+      });
+
+      // ✅ STEP 3: Apply imported values
+      allRows.forEach(row => {
+        const imp = map[row.SKU] || {};
+        months.forEach(m => {
+          const v = parseFloat(imp[m]);
+          row[m] = isNaN(v) ? 0 : v;
+        });
+      });
+
+      // ✅ STEP 4: Update UI inputs
+      document.querySelectorAll('#gridBody input[data-month]').forEach(inp => {
+        const ri = parseInt(inp.dataset.ri);
+        const m  = inp.dataset.month;
+        inp.value = allRows[ri][m] || 0;
+        inp.classList.remove('err');
+      });
+
+      // ✅ STEP 5: Recalculate totals
+      const totals = calculateTotals(allRows, months, curDrrCh);
+      renderTotalsRow(totals);
+
+      toast('Excel imported — old data cleared & empty treated as 0.', 's', 5000);
     }
+
   } catch(e) { toast('Upload error: ' + e.message, 'e'); }
   finally { spin.hide(); }
 }
