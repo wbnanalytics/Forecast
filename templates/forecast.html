@@ -648,11 +648,18 @@ function renderTotalsRow(totals) {
   const tfoot = document.getElementById('forecastTableFooter');
   if (!tfoot) return;
 
-  let html = `<tr class="totals-row">
-  <td colspan="3"><strong>Total</strong></td>`;
+  let html = `<tr class="totals-row" style="background:var(--fix-bg);border-top:2px solid var(--g500)">
+    <td class="fix" style="font-weight:700;color:var(--g900)">Total</td>
+    <td class="fix"></td>
+    <td class="fix"></td>`;
+
+  for (let i = 0; i < DRR_LABELS.length; i++) {
+    html += `<td class="drr-cell" style="color:var(--t3)">—</td>`;
+  }
 
   months.forEach(m => {
-    html += `<td><strong>${totals[m]}</strong></td>`;
+    const v = totals[m];
+    html += `<td style="text-align:center;font-size:12px;font-weight:700;color:var(--g900);background:var(--cell-ok);border:1px solid var(--border)">${v > 0 ? v.toLocaleString() : '—'}</td>`;
   });
 
   html += `</tr>`;
@@ -905,7 +912,10 @@ function syncInputs(){
   document.querySelectorAll('#gridBody input[data-month]').forEach(inp=>{
     const ri=parseInt(inp.dataset.ri), m=inp.dataset.month;
     const v=inp.value.trim();
-    allRows[ri][m]=v!==''?(parseFloat(v.replace(',',''))||v):'';
+    const parsed = v !== '' ? parseFloat(v.replace(',','')) : 0;
+    allRows[ri][m] = isNaN(parsed) ? v : parsed;
+    // Reflect 0 back into the input visually
+    if (v === '') inp.value = 0;
   });
 }
 
