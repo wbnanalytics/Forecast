@@ -1156,23 +1156,32 @@ def api_upload_excel_fill(qkey):
                 skipped += 1
                 continue
 
-            # ── Write ONLY the month values from month_col_map ────────────────
-            # month_col_map already contains only the member's channel columns
-            # (or plain month columns from a neutral template).
-            # Columns for other channels are not in this map → never written.
-            if row_id not in merged:
-                merged[row_id] = {}
+           # ── Write ONLY the month values from month_col_map ────────────────
+# For every matched row, ALL month columns are written — including
+# blanks/zeros — so that emptied cells in the Excel correctly
+# overwrite previously saved draft values with 0.
+if row_id not in merged:
+    merged[row_id] = {}
 
-            for month, col_idx in month_col_map.items():
-                if col_idx < len(row):
-                    raw = row[col_idx]
-                    if raw is not None and str(raw).strip() not in ("", "-", "—", "0.0", "0"):
-                        try:
-                            val = float(str(raw).replace(",", ""))
-                            merged[row_id][month] = val
-                            filled += 1
-                        except ValueError:
-                            pass   # non-numeric — skip silently
+for month, col_idx in month_col_map.items():
+    if col_idx < len(row):
+        raw = row[col_idx]
+        raw_str = str(raw).strip() if raw is not None else ""
+        if raw_str in ("", "-", "—", "None"):
+            # Empty cell → write 0, overwriting any previous draft value
+            merged[row_id][month] = 0
+        else:
+            try:
+                val = float(raw_str.replace(",", ""))
+                merged[row_id][month] = val
+                if val != 0:
+                    filled += 1
+            except ValueError:
+                # Non-numeric → treat as 0
+                merged[row_id][month] = 0
+    else:
+        # Column index out of range → write 0
+        merged[row_id][month] = 0
 
         if filled == 0:
             ch_hint = f" for channel '{member_ch}'" if member_ch else ""
