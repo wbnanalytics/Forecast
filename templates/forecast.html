@@ -649,7 +649,7 @@ function renderTotalsRow(totals) {
   if (!tfoot) return;
 
   let html = `<tr class="totals-row">
-  <td colspan="${fixedCols + drrCols}"><strong>Total</strong></td>`;
+  <td colspan="3"><strong>Total</strong></td>`;
 
   months.forEach(m => {
     html += `<td><strong>${totals[m]}</strong></td>`;
