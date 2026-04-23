@@ -114,6 +114,9 @@ td.edit input:focus{background:var(--cell-ok);box-shadow:inset 0 0 0 1px var(--g
 td.edit input.err{color:var(--danger)}
 body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:not-allowed;pointer-events:none}
 
+/* Totals row */
+tfoot tr.totals-row td{height:34px;vertical-align:middle}
+
 /* Channel selector tabs (for DRR ref column switching) */
 .drr-ch-tabs{display:flex;gap:4px;align-items:center;font-size:11px;color:var(--t3);padding:0 4px}
 .drr-ch-tab{padding:2px 7px;border-radius:3px;cursor:pointer;border:1px solid var(--border);background:#fff;font-size:10px;font-weight:500;color:var(--t3);transition:all .1s}
@@ -363,7 +366,6 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
   A new quarter has been activated by admin — click to reload and see it.
 </div>
 
-
 <!-- Admin ticker banner -->
 {% if ticker.active and ticker.message %}
 <div class="banner ban-ticker-{{ ticker.style }} on" id="banTicker">
@@ -379,7 +381,6 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
   <span id="banTickerTxt"></span>
 </div>
 {% endif %}
-
 
 <!-- Filter bar -->
 <div class="filter-bar" id="filterBar">
@@ -400,15 +401,12 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
 <!-- Toolbar -->
 <div class="toolbar" id="toolbarEl">
   <div class="toolbar-left">
-    <!-- Admin only: Download template -->
     {% if is_admin %}
     <button class="btn" id="btnDownTpl" onclick="downloadTpl()">Download Template</button>
     {% endif %}
-    <!-- DRR channel label (set dynamically) -->
     <div id="drrChLabel" style="display:none;font-size:11px;color:var(--t3);padding:0 4px">
       <span id="drrChName" style="font-weight:600;color:var(--drr-fg)"></span> DRR (historical reference)
     </div>
-    <!-- Admin: channel selector tabs -->
     <div class="drr-ch-tabs" id="drrChTabs" style="display:none">
       <span style="font-size:10px;color:var(--t3)">DRR ref:</span>
     </div>
@@ -416,7 +414,6 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
   </div>
   <div class="toolbar-right" id="toolRight">
     <button class="btn" id="btnDraft" onclick="saveDraft()" style="display:none">Save Draft</button>
-    <!-- Load sample values — shown only when flag is on and not submitted -->
     {% if flags.get('load_sample_values', true) %}
     <button class="btn" id="btnSample" onclick="loadSampleValues()" style="display:none"
       title="Fill all month columns with sample placeholder values">
@@ -427,7 +424,6 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
     </button>
     {% endif %}
 
-    <!-- Download template — shown when flag is on -->
     {% if flags.get('download_template', true) %}
     <button class="btn" id="btnTpl" onclick="downloadTpl()" style="display:none"
       title="Download blank Excel template to fill offline">
@@ -440,7 +436,6 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
     </button>
     {% endif %}
 
-    <!-- Upload filled Excel — shown when flag is on and not submitted -->
     {% if flags.get('upload_excel_fill', true) %}
     <button class="btn" id="btnUploadXl" onclick="openUploadModal()" style="display:none"
       title="Upload a filled Excel template to auto-fill the form">
@@ -453,7 +448,6 @@ body.locked td.edit input{background:var(--lock-bg);color:var(--lock-fg);cursor:
     </button>
     {% endif %}
     <button class="btn btn-primary" id="btnSubmit" onclick="openConfirm()" style="display:none">Submit Forecast</button>
-
   </div>
 </div>
 
@@ -622,12 +616,11 @@ async function loadDRR(qkey){
     populateFilters();
     buildTable(allRows, userCh, allChs);
     const totals = calculateTotals(allRows, months, userCh || curDrrCh);
-renderTotalsRow(totals);
+    renderTotalsRow(totals);
     applyUIState(j);
     setStatus('Loaded '+allRows.length+' products for '+QUARTERS[qkey].label
       +(userCh?' — Channel: '+userCh:'')+(isLocked?' — submitted.':' — ready to fill.'));
 
-    // Update confirm modal lock info
     if(j.locked_months && j.locked_months.length){
       document.getElementById('lockInfoTxt').innerHTML=
         '<strong>🔒 Locked after submit:</strong> '+j.locked_months.join(', ')+'<br>'+
@@ -639,27 +632,29 @@ renderTotalsRow(totals);
   finally{ spin.hide(); }
 }
 
+/* ── Live totals ──────────────────────────────────────────────── */
 function onCellChange() {
   const totals = calculateTotals(allRows, months, curDrrCh);
   renderTotalsRow(totals);
 }
 
+/* ── UPDATED: renderTotalsRow with correct column alignment ───── */
 function renderTotalsRow(totals) {
   const tfoot = document.getElementById('forecastTableFooter');
   if (!tfoot) return;
 
   let html = `<tr class="totals-row" style="background:var(--fix-bg);border-top:2px solid var(--g500)">
-    <td class="fix" style="font-weight:700;color:var(--g900)">Total</td>
+    <td class="fix" style="font-weight:700;color:var(--g900);font-size:12px">Total</td>
     <td class="fix"></td>
     <td class="fix"></td>`;
 
   for (let i = 0; i < DRR_LABELS.length; i++) {
-    html += `<td class="drr-cell" style="color:var(--t3)">—</td>`;
+    html += `<td class="drr-cell" style="color:var(--t3);font-size:11px">—</td>`;
   }
 
   months.forEach(m => {
     const v = totals[m];
-    html += `<td style="text-align:center;font-size:12px;font-weight:700;color:var(--g900);background:var(--cell-ok);border:1px solid var(--border)">${v > 0 ? v.toLocaleString() : '—'}</td>`;
+    html += `<td style="text-align:center;font-size:12px;font-weight:700;color:var(--g900);background:var(--cell-ok);border:1px solid var(--border);padding:0 4px">${v > 0 ? v.toLocaleString() : '0'}</td>`;
   });
 
   html += `</tr>`;
@@ -668,16 +663,14 @@ function renderTotalsRow(totals) {
 
 function calculateTotals(rows, months, channel) {
   const totals = {};
-  
   months.forEach(m => totals[m] = 0);
-
   rows.forEach(row => {
     months.forEach(m => {
-      const val = Number(row.forecast?.[channel]?.[m] || 0);
+      const raw = row.forecast?.[channel]?.[m] ?? row[m];
+      const val = parseFloat(raw) || 0;
       totals[m] += val;
     });
   });
-
   return totals;
 }
 
@@ -707,6 +700,9 @@ function switchDrrCh(ch){
       td.textContent=(v!==undefined&&v!==null&&v!=='0.00'&&v!==0)?Number(v).toFixed(1):'—';
     });
   });
+  // Recalculate totals for newly selected channel
+  const totals = calculateTotals(allRows, months, ch);
+  renderTotalsRow(totals);
 }
 
 /* ── Filters ──────────────────────────────────────────────────── */
@@ -736,10 +732,10 @@ function applyFilters(){
     if(ptype && (d.ptype||'').toLowerCase()!==ptype) show=false;
     if(search && !((d.sku||'').toLowerCase().includes(search)||(d.name||'').toLowerCase().includes(search))) show=false;
     if(filled==='filled'){
-      const ok=months.every(m=>{ const i=tr.querySelector('[data-month="'+m+'"]'); return i&&i.value.trim()!==''; });
+      const ok=months.every(m=>{ const i=tr.querySelector('[data-month="'+m+'"]'); return i&&i.value.trim()!==''&&i.value!=='0'; });
       if(!ok) show=false;
     } else if(filled==='empty'){
-      const any=months.some(m=>{ const i=tr.querySelector('[data-month="'+m+'"]'); return !i||i.value.trim()===''; });
+      const any=months.some(m=>{ const i=tr.querySelector('[data-month="'+m+'"]'); return !i||i.value.trim()===''||i.value==='0'; });
       if(!any) show=false;
     }
     tr.classList.toggle('h',!show);
@@ -814,41 +810,47 @@ function buildTable(rows, userCh, allChs){
     months.forEach(m=>{
       const td=document.createElement('td'); td.className='edit'; td.style.minWidth='88px';
       const inp=document.createElement('input');
-      inp.type='text'; inp.value=row[m]||'';
+      inp.type='text';
+      // ── CHANGE: default to 0 if no value ──
+      const existingVal = row[m];
+      inp.value = (existingVal !== undefined && existingVal !== null && existingVal !== '') ? existingVal : 0;
       inp.dataset.ri=ri; inp.dataset.month=m;
+      // Keep allRows in sync with the default 0
+      if (existingVal === undefined || existingVal === null || existingVal === '') {
+        allRows[ri][m] = 0;
+      }
       if(isLocked){
         inp.disabled=true;
       } else {
         inp.addEventListener('input', (e) => {
-  const v = e.target.value.trim().replace(',', '');
-  e.target.classList.toggle('err', v !== '' && isNaN(parseFloat(v)));
-
-  onCell(e);
-  onCellChange(); // ✅ live totals update
-});
-        inp.addEventListener('focus',e=>e.target.select());
-        inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();e.target.blur();} });
-        inp.addEventListener('input',e=>{
-          const v=e.target.value.trim().replace(',','');
-          e.target.classList.toggle('err',v!==''&&isNaN(parseFloat(v)));
+          const v = e.target.value.trim().replace(',', '');
+          e.target.classList.toggle('err', v !== '' && isNaN(parseFloat(v)));
+          onCell(e);
+          onCellChange();
         });
+        inp.addEventListener('focus', e => e.target.select());
+        inp.addEventListener('keydown', e => { if(e.key==='Enter'){e.preventDefault();e.target.blur();} });
       }
       td.appendChild(inp); tr.appendChild(td);
     });
     body.appendChild(tr);
   });
-  // Sync feature-flag buttons after table renders
   _syncFlagButtons(isLocked);
 }
 
 function onCell(e){
   const ri=parseInt(e.target.dataset.ri), m=e.target.dataset.month;
   let v=e.target.value.trim().replace(',','');
-  if(v===''){e.target.classList.remove('err');allRows[ri][m]='';return;}
+  // ── CHANGE: treat empty as 0 ──
+  if(v===''){
+    e.target.classList.remove('err');
+    allRows[ri][m]=0;
+    return;
+  }
   const n=parseFloat(v);
   if(isNaN(n)){e.target.classList.add('err');return;}
   e.target.classList.remove('err');
-  e.target.value=n; allRows[ri][m]=n;
+  allRows[ri][m]=n;
 }
 
 /* ── Apply UI lock/unlock state ───────────────────────────────── */
@@ -862,7 +864,6 @@ function applyUIState(j){
   document.getElementById('banLock').classList.toggle('on',isLocked);
   if(isLocked){
     document.getElementById('banAt').textContent=j.submitted_at+(j.revision>1?' (Rev '+j.revision+')':'');
-    // Show locked months badge
     const lmEl=document.getElementById('banLockedMonths');
     if(j.locked_months && j.locked_months.length){
       lmEl.textContent='🔒 Locked: '+j.locked_months.join(', ');
@@ -903,19 +904,21 @@ function applyUIState(j){
   if(existingRefill && (j.refill_requested||!isLocked||cooldown)){
     existingRefill.remove();
   }
-  // Sync feature-flag buttons without recursion
   _syncFlagButtons(j.submitted || isLocked);
 }
 
-/* ── Sync inputs → allRows ─────────────────────────────────────  */
+/* ── UPDATED: syncInputs defaults empty to 0 ──────────────────── */
 function syncInputs(){
   document.querySelectorAll('#gridBody input[data-month]').forEach(inp=>{
     const ri=parseInt(inp.dataset.ri), m=inp.dataset.month;
     const v=inp.value.trim();
-    const parsed = v !== '' ? parseFloat(v.replace(',','')) : 0;
-    allRows[ri][m] = isNaN(parsed) ? v : parsed;
-    // Reflect 0 back into the input visually
-    if (v === '') inp.value = 0;
+    if(v===''||v==='0'){
+      allRows[ri][m]=0;
+      inp.value=0;
+      return;
+    }
+    const parsed=parseFloat(v.replace(',',''));
+    allRows[ri][m]=isNaN(parsed)?v:parsed;
   });
 }
 
@@ -1040,10 +1043,7 @@ function showEmpty(title,desc){
   document.getElementById('emptyDesc').textContent=desc;
 }
 
-/* ── Floating Calculator ─────────────────────────────────────────
-   Logic: accumulator model with memory (MC/MR/M+/M-)
-   Keyboard support: digits, operators, Enter/=, Backspace, Escape
- ── */
+/* ── Floating Calculator ───────────────────────────────────────── */
 let _cExpr='', _cVal='0', _cPendingOp=null, _cPendingVal=null, _cJustEvaled=false, _cMem=0;
 
 function toggleFloatCalc(){
@@ -1116,7 +1116,6 @@ function _cCompute(a,b,op){
   else if(op==='*') r=a*b;
   else if(op==='/') r=b!==0?a/b:NaN;
   if(isNaN(r)||!isFinite(r)) return 'Err';
-  // Round to avoid floating point noise
   return Math.round(r*1e10)/1e10;
 }
 
@@ -1129,11 +1128,9 @@ function calcMem(op){
   _cUpdate();
 }
 
-// Keyboard shortcut for calculator
 document.addEventListener('keydown',e=>{
   const fc=document.getElementById('floatCalc');
   if(fc.style.display==='none') return;
-  // Don't intercept when user is typing in forecast inputs
   if(document.activeElement && document.activeElement.tagName==='INPUT') return;
   const map={'Enter':'=','Backspace':'⌫','Escape':'C'};
   const k=map[e.key]||e.key;
@@ -1187,10 +1184,7 @@ setInterval(async () => {
   } catch(e) {}
 }, 60000);
 
-/* ── Feature-flag button visibility helper ──────────────────────────────────
-   Called from within applyUIState() and buildTable() — NOT as wrappers.
-   (Wrappers using const _orig = fn; function fn(){} cause infinite recursion
-    because function declarations are hoisted before const assignments.) */
+/* ── Feature-flag button visibility helper ─────────────────────── */
 function _syncFlagButtons(submittedOrLocked) {
   const flags = SERVER_FLAGS || {};
   const bSample = document.getElementById('btnSample');
@@ -1206,16 +1200,16 @@ function loadSampleValues() {
   if (!allRows.length) { toast('Load a quarter first.', 'i'); return; }
   if (isLocked)        { toast('Form is locked.', 'i'); return; }
   if (!confirm('This will overwrite any values you have already entered. Continue?')) return;
-
-  // Fill each month column with a plausible random value (50–500, multiple of 10)
   document.querySelectorAll('#gridBody input[data-month]').forEach(inp => {
     const ri = parseInt(inp.dataset.ri);
     const m  = inp.dataset.month;
-    const v  = Math.round((Math.random() * 45 + 5)) * 10;  // 50–500 step 10
+    const v  = Math.round((Math.random() * 45 + 5)) * 10;
     inp.value        = v;
     inp.classList.remove('err');
     if (allRows[ri]) allRows[ri][m] = v;
   });
+  const totals = calculateTotals(allRows, months, curDrrCh);
+  renderTotalsRow(totals);
   toast('Sample values loaded — review before submitting.');
   setStatus('Sample values filled — ' + allRows.length + ' rows.');
 }
@@ -1267,17 +1261,13 @@ async function doUploadExcel() {
     const r = await fetch('/api/upload-excel-fill/' + curQ, { method: 'POST', body: fd });
     const j = await r.json();
     if (!r.ok) { toast(j.error || 'Import failed.', 'e', 6000); return; }
-
-    // Merge imported values into the live grid
     if (j.status === 'merged') {
-      // Reload DRR to pull the saved draft from server
       await loadDRR(curQ);
       toast(j.message || 'Excel imported.', 's', 5000);
     }
   } catch(e) { toast('Upload error: ' + e.message, 'e'); }
   finally { spin.hide(); }
 }
-
 
 /* ── Init ─────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded',()=>{
