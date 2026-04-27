@@ -79,12 +79,21 @@ ADMINS           = [e.strip().lower() for e in os.getenv("ADMINS","").split(",")
 FORECAST_MEMBERS = [e.strip().lower() for e in os.getenv("FORECAST_MEMBERS","").split(",") if e.strip()]
 
 def _build_channel_map():
+    """
+    Returns {email: [channel, ...]}
+    Supports one OR multiple channels per user.
+    e.g. CHANNEL_MAP=alice@x.com:D2C,alice@x.com:Amazon,bob@x.com:Retail
+    """
     m = {}
     for part in os.getenv("CHANNEL_MAP","").split(","):
         part = part.strip()
         if ":" in part:
             email, ch = part.rsplit(":", 1)
-            m[email.strip().lower()] = ch.strip()
+            email = email.strip().lower()
+            ch    = ch.strip()
+            m.setdefault(email, [])
+            if ch not in m[email]:
+                m[email].append(ch)
     return m
 
 CHANNEL_MAP = _build_channel_map()
@@ -494,7 +503,7 @@ def api_load_drr(qkey):
     email    = _email(); is_adm = _is_admin()
     drr_data = q.get("drr_data") or []
     sub      = _sub_get(qkey, email)
-    saved    = sub.get("data") or {}
+    raw_data = sub.get("data") or {}
 
     if is_adm:
         ch_param = request.args.get("channel") or None
@@ -507,13 +516,23 @@ def api_load_drr(qkey):
         else:
             member_ch = None
     else:
-        member_ch = CHANNEL_MAP.get(email)
-        if not member_ch:
+        member_channels = CHANNEL_MAP.get(email) or []
+        if not member_channels:
             return jsonify({"error": "You are not assigned to a channel. Contact admin to set CHANNEL_MAP in .env."}), 400
+        # Support ?channel= to switch active channel for multi-channel users
+        ch_param_user = request.args.get("channel") or None
+        member_ch = ch_param_user if ch_param_user in member_channels else member_channels[0]
 
     cooldown, cmsg = _cooldown_active(sub, qkey)
     allowed_months = _refill_allowed_months(qkey)
     locked_months  = _locked_months_in_quarter(qkey)
+
+    # Resolve saved forecast data for the active channel (supports channel-keyed + legacy flat)
+    is_channel_keyed = any(k in CHANNELS for k in raw_data) if raw_data else False
+    if is_channel_keyed:
+        saved = raw_data.get(member_ch, {}) if member_ch else raw_data
+    else:
+        saved = raw_data  # legacy flat or admin view
 
     rows = []
     for row in drr_data:
@@ -542,6 +561,7 @@ def api_load_drr(qkey):
         "drr_labels":    DRR_LABELS,
         "drr_short":     DRR_SHORT,
         "user_channel":  member_ch,
+        "user_channels": member_channels if not is_adm else None,  # list of channels for this user
         "all_channels":  CHANNELS if not member_ch else None,
         "submitted":     sub.get("submitted", False),
         "submitted_at":  sub.get("submitted_at",""),
@@ -567,7 +587,19 @@ def api_save_draft(qkey):
         return jsonify({"error":"Already submitted — cannot save draft"}), 409
     rows = request.json.get("rows",[])
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in QUARTERS[qkey]["months"]} for row in rows}
-    _sub_set(qkey, email, {"data": data, "user_name": _name()})
+    # Multi-channel: merge into channel-keyed store
+    member_channels = CHANNEL_MAP.get(email) or []
+    ch_param = (request.json or {}).get("channel") or request.args.get("channel") or None
+    member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
+    existing = dict(_sub_get(qkey, email).get("data") or {})
+    if existing and not any(k in CHANNELS for k in existing):
+        existing = {(member_channels[0] if member_channels else "unknown"): existing}
+    if member_ch:
+        existing[member_ch] = data
+        merged = existing
+    else:
+        merged = data
+    _sub_set(qkey, email, {"data": merged, "user_name": _name()})
     return jsonify({"status":"saved"})
 
 # ── API: Submit ────────────────────────────────────────────────────────────────
@@ -599,7 +631,27 @@ def api_submit(qkey):
 
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
 
-    member_ch = CHANNEL_MAP.get(email)
+    # ── Multi-channel support ──────────────────────────────────────────────────
+    member_channels = CHANNEL_MAP.get(email) or []
+    member_ch = member_channels[0] if member_channels else None
+    # Frontend sends ?channel= (or in body) so we know which channel is being submitted
+    ch_param = (request.json or {}).get("channel") or request.args.get("channel") or None
+    if ch_param and ch_param in member_channels:
+        member_ch = ch_param
+
+    # Merge this channel's data into the per-channel store (preserves other channels)
+    existing_sub  = _sub_get(qkey, email)
+    existing_data = dict(existing_sub.get("data") or {})
+    if existing_data and not any(k in CHANNELS for k in existing_data):
+        # Legacy flat structure — migrate under the user's first known channel
+        legacy_ch = existing_sub.get("channel") or (member_channels[0] if member_channels else "unknown")
+        existing_data = {legacy_ch: existing_data}
+    if member_ch:
+        existing_data[member_ch] = data
+        merged_data = existing_data
+    else:
+        merged_data = data  # admin / no-channel path — unchanged behaviour
+
     q_master  = _q_get(qkey)
     drr_lookup = {p["_row_id"]: p.get("_drr", {}) for p in (q_master.get("drr_data") or [])}
     for row in rows:
@@ -630,7 +682,7 @@ def api_submit(qkey):
 
     _sub_set(qkey, email, dict(
         submitted=True, submitted_at=at, submitted_at_dt=now.isoformat(),
-        data=data, user_name=name, revision=rev,
+        data=merged_data, user_name=name, revision=rev, channel=member_ch,
         refill_requested=False, refill_reason="",
         refill_cooldown_until=None,
         excel_bytes=eb, file=fn
@@ -1528,7 +1580,8 @@ def _export_quarter_excel(qkey, q, dest):
     locked_months = _locked_months_in_quarter(qkey)
     for m_email in all_members:
         sub = all_subs.get(m_email, _sub_default())
-        ch  = CHANNEL_MAP.get(m_email, "Unassigned")
+        member_chs = CHANNEL_MAP.get(m_email) or []
+        ch  = ", ".join(member_chs) if member_chs else "Unassigned"
         row = [ch, sub.get("user_name", m_email), m_email,
                "Submitted" if sub.get("submitted") else "Pending",
                sub.get("submitted_at",""), sub.get("revision",0),
@@ -1583,11 +1636,24 @@ def _export_quarter_excel(qkey, q, dest):
     data_ri = 3
     for m_email in all_members:
         sub   = all_subs.get(m_email, _sub_default())
-        saved = sub.get("data") or {}
-        ch    = CHANNEL_MAP.get(m_email, "Unassigned")
+        raw_data = sub.get("data") or {}
+        member_channels = CHANNEL_MAP.get(m_email) or []
+        ch    = ", ".join(member_channels) if member_channels else "Unassigned"
         m_name= sub.get("user_name", m_email.split("@")[0])
         submitted_at = sub.get("submitted_at","")
         even  = data_ri % 2 == 0
+
+        # Detect per-channel data structure vs legacy flat structure
+        is_channel_keyed = any(k in CHANNELS for k in raw_data) if raw_data else False
+
+        # Emit one block of rows per channel the user has filled
+        channels_to_export = member_channels if member_channels else ["Unassigned"]
+        for export_ch in channels_to_export:
+            if is_channel_keyed:
+                saved = raw_data.get(export_ch, {})
+            else:
+                # Legacy flat data — only show under their single channel
+                saved = raw_data if export_ch == (member_channels[0] if member_channels else "Unassigned") else {}
         for prod in drr_data:
             rid    = prod.get("_row_id","")
             drr_all= prod.get("_drr", {})
@@ -1703,6 +1769,6 @@ def api_insights_data():
 
 if __name__ == "__main__":
     print("\n  forecast.wbn — Wellbeing Nutrition v6")
-    print("  http://localhost5000\n")
+    print("  http://localhost:5000\n")
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
