@@ -170,8 +170,18 @@ def _sub_default():
         data=None, user_name="", revision=0,
         refill_requested=False, refill_reason="",
         refill_cooldown_until=None,
-        excel_bytes=None, file=""
+        excel_bytes=None, file="", channel=""
     )
+
+def _is_channel_keyed(data):
+    return isinstance(data, dict) and any(k in CHANNELS for k in data.keys())
+
+def _wrap_legacy_data(raw_data, email, preferred_channel=None):
+    if not raw_data or _is_channel_keyed(raw_data):
+        return raw_data or {}
+    member_channels = CHANNEL_MAP.get((email or '').lower()) or []
+    channel = preferred_channel or (member_channels[0] if member_channels else 'Unassigned')
+    return {channel: raw_data}
 
 def _sub_get(qkey, email):
     k = _sub_key(qkey, email)
@@ -503,41 +513,27 @@ def api_load_drr(qkey):
     drr_data = q.get("drr_data") or []
     sub      = _sub_get(qkey, email)
     raw_data = sub.get("data") or {}
-    saved    = raw_data  # default; overridden below per branch
-    member_channels = []  # filled for non-admin users below
 
+    # Channel is now the forecast data scope for both admins and members.
+    # Previously admin channel switching only changed DRR reference columns,
+    # so one flat forecast value appeared for every channel.
     if is_adm:
+        member_channels = CHANNELS[:]
         ch_param = request.args.get("channel") or None
-        if ch_param:
-            member_ch = ch_param
-            # FIX: CHANNEL_MAP values are lists — handle both list and string
-            member_email = next(
-                (e for e, chs in CHANNEL_MAP.items()
-                 if ch_param in (chs if isinstance(chs, list) else [chs])), None
-            )
-            ch_sub  = _sub_get(qkey, member_email) if member_email else _sub_default()
-            ch_raw  = ch_sub.get("data") or {}
-            is_ch_keyed_admin = any(k in CHANNELS for k in ch_raw) if ch_raw else False
-            saved   = ch_raw.get(ch_param, {}) if is_ch_keyed_admin else ch_raw
-            sub     = ch_sub
-        else:
-            member_ch = None
+        member_ch = ch_param if ch_param in member_channels else (member_channels[0] if member_channels else None)
     else:
         member_channels = CHANNEL_MAP.get(email) or []
         if not member_channels:
             return jsonify({"error": "You are not assigned to a channel. Contact admin to set CHANNEL_MAP in .env."}), 400
-        ch_param_user = request.args.get("channel") or None
-        member_ch = ch_param_user if ch_param_user in member_channels else member_channels[0]
+        ch_param = request.args.get("channel") or None
+        member_ch = ch_param if ch_param in member_channels else member_channels[0]
+
+    raw_data = _wrap_legacy_data(raw_data, email, sub.get("channel") or member_ch)
+    saved = raw_data.get(member_ch, {}) if member_ch else raw_data
 
     cooldown, cmsg = _cooldown_active(sub, qkey)
     allowed_months = _refill_allowed_months(qkey)
     locked_months  = _locked_months_in_quarter(qkey)
-
-    # Resolve saved data for active channel (channel-keyed new format + legacy flat)
-    if not is_adm:
-        is_ch_keyed = any(k in CHANNELS for k in raw_data) if raw_data else False
-        saved = raw_data.get(member_ch, {}) if is_ch_keyed else raw_data
-    # (admin path: saved already set above from ch_raw)
 
     rows = []
     for row in drr_data:
@@ -566,9 +562,8 @@ def api_load_drr(qkey):
         "drr_labels":    DRR_LABELS,
         "drr_short":     DRR_SHORT,
         "user_channel":  member_ch,
-        # FIX: always return user_channels for multi-channel members
-        "user_channels": (member_channels if member_channels else None) if not is_adm else None,
-        "all_channels":  CHANNELS if not member_ch else None,
+        "user_channels": member_channels,
+        "all_channels":  None,
         "submitted":     sub.get("submitted", False),
         "submitted_at":  sub.get("submitted_at",""),
         "revision":      sub.get("revision", 0),
@@ -595,7 +590,7 @@ def api_save_draft(qkey):
     # FIX: read entire body once so both rows and channel are available
     body = request.json or {}
     rows = body.get("rows", [])
-    member_channels = CHANNEL_MAP.get(email) or []
+    member_channels = CHANNELS[:] if _is_admin() else (CHANNEL_MAP.get(email) or [])
     ch_param = body.get("channel") or request.args.get("channel") or None
     member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
 
@@ -603,10 +598,8 @@ def api_save_draft(qkey):
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in QUARTERS[qkey]["months"]} for row in rows}
 
     # Merge into channel-keyed store — preserves other channels
-    existing = dict(_sub_get(qkey, email).get("data") or {})
-    if existing and not any(k in CHANNELS for k in existing):
-        # Legacy flat — migrate under first channel
-        existing = {(member_channels[0] if member_channels else "unknown"): existing}
+    existing_sub = _sub_get(qkey, email)
+    existing = _wrap_legacy_data(existing_sub.get("data") or {}, email, existing_sub.get("channel") or member_ch)
     if member_ch:
         existing[member_ch] = data
         merged = existing
@@ -647,15 +640,13 @@ def api_submit(qkey):
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
 
     # Multi-channel support: each channel stored separately
-    member_channels = CHANNEL_MAP.get(email) or []
+    member_channels = CHANNELS[:] if _is_admin() else (CHANNEL_MAP.get(email) or [])
     ch_param = body_data.get("channel") or request.args.get("channel") or None
     member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
 
     # Merge into channel-keyed store — Channel B submit does NOT erase Channel A
-    existing_data = dict(_sub_get(qkey, email).get("data") or {})
-    if existing_data and not any(k in CHANNELS for k in existing_data):
-        legacy_ch = (member_channels[0] if member_channels else "unknown")
-        existing_data = {legacy_ch: existing_data}
+    existing_sub = _sub_get(qkey, email)
+    existing_data = _wrap_legacy_data(existing_sub.get("data") or {}, email, existing_sub.get("channel") or member_ch)
     if member_ch:
         existing_data[member_ch] = data
         merged_data = existing_data
@@ -999,7 +990,8 @@ def api_upload_excel_fill(qkey):
 
     # Determine channel scope
     if is_adm:
-        member_ch = request.args.get("channel") or None
+        ch_param_upload = request.args.get("channel") or None
+        member_ch = ch_param_upload if ch_param_upload in CHANNELS else (CHANNELS[0] if CHANNELS else None)
     else:
         member_channels_upload = CHANNEL_MAP.get(email) or []
         if not member_channels_upload:
@@ -1188,11 +1180,9 @@ def api_upload_excel_fill(qkey):
             }), 422
 
         # FIX: Store under channel key — preserves data for other channels
-        existing_upload = dict(_sub_get(qkey, email).get("data") or {})
-        member_channels_all = CHANNEL_MAP.get(email) or []
-        if existing_upload and not any(k in CHANNELS for k in existing_upload):
-            first_ch = member_channels_all[0] if member_channels_all else "unknown"
-            existing_upload = {first_ch: existing_upload}
+        existing_sub = _sub_get(qkey, email)
+        existing_upload = _wrap_legacy_data(existing_sub.get("data") or {}, email, existing_sub.get("channel") or member_ch)
+        member_channels_all = CHANNELS[:] if is_adm else (CHANNEL_MAP.get(email) or [])
         if member_ch:
             existing_upload[member_ch] = merged
             final_merged = existing_upload

@@ -103,6 +103,7 @@ def init_db():
             submitted_at          VARCHAR(32),
             submitted_at_dt       VARCHAR(64),
             user_name             VARCHAR(255),
+            channel               VARCHAR(128),
             revision              INTEGER      DEFAULT 0,
             refill_requested      BOOLEAN      DEFAULT FALSE,
             refill_reason         TEXT,
@@ -114,6 +115,9 @@ def init_db():
             UNIQUE (qkey, email)
         )
     """)
+
+    # Safe migration for older deployments
+    _execute("ALTER TABLE wbn_submissions ADD COLUMN IF NOT EXISTS channel VARCHAR(128)")
 
     # ── Indexes ───────────────────────────────────────────────────────────────
     _execute("""
@@ -232,15 +236,16 @@ def db_save_submission(qkey: str, email: str, sub: dict):
     data        = sub.get("data")
     _execute("""
         INSERT INTO wbn_submissions
-            (qkey, email, submitted, submitted_at, submitted_at_dt, user_name,
+            (qkey, email, submitted, submitted_at, submitted_at_dt, user_name, channel,
              revision, refill_requested, refill_reason, refill_cooldown_until,
              data, file, excel_bytes, updated_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,NOW())
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,NOW())
         ON CONFLICT (qkey, email) DO UPDATE SET
             submitted             = EXCLUDED.submitted,
             submitted_at          = EXCLUDED.submitted_at,
             submitted_at_dt       = EXCLUDED.submitted_at_dt,
             user_name             = EXCLUDED.user_name,
+            channel               = EXCLUDED.channel,
             revision              = EXCLUDED.revision,
             refill_requested      = EXCLUDED.refill_requested,
             refill_reason         = EXCLUDED.refill_reason,
@@ -256,6 +261,7 @@ def db_save_submission(qkey: str, email: str, sub: dict):
         sub.get("submitted_at", ""),
         sub.get("submitted_at_dt", ""),
         sub.get("user_name", ""),
+        sub.get("channel", ""),
         sub.get("revision", 0),
         sub.get("refill_requested", False),
         sub.get("refill_reason", ""),
@@ -279,6 +285,7 @@ def db_get_submission(qkey: str, email: str) -> dict | None:
         "submitted_at":          row["submitted_at"] or "",
         "submitted_at_dt":       row["submitted_at_dt"] or "",
         "user_name":             row["user_name"] or "",
+        "channel":               row.get("channel") or "",
         "revision":              row["revision"] or 0,
         "refill_requested":      row["refill_requested"],
         "refill_reason":         row["refill_reason"] or "",
@@ -302,6 +309,7 @@ def db_get_all_subs_for_quarter(qkey: str) -> dict:
             "submitted_at":          row["submitted_at"] or "",
             "submitted_at_dt":       row["submitted_at_dt"] or "",
             "user_name":             row["user_name"] or "",
+            "channel":               row.get("channel") or "",
             "revision":              row["revision"] or 0,
             "refill_requested":      row["refill_requested"],
             "refill_reason":         row["refill_reason"] or "",
