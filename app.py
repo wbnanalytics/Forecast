@@ -510,15 +510,16 @@ def api_load_drr(qkey):
         ch_param = request.args.get("channel") or None
         if ch_param:
             member_ch = ch_param
-            # CHANNEL_MAP now returns lists — find the member who has this channel
+            # FIX: CHANNEL_MAP values are lists — handle both list and string
             member_email = next(
-                (e for e, chs in CHANNEL_MAP.items() if ch_param in chs), None
+                (e for e, chs in CHANNEL_MAP.items()
+                 if ch_param in (chs if isinstance(chs, list) else [chs])), None
             )
-            ch_sub   = _sub_get(qkey, member_email) if member_email else _sub_default()
-            ch_raw   = ch_sub.get("data") or {}
+            ch_sub  = _sub_get(qkey, member_email) if member_email else _sub_default()
+            ch_raw  = ch_sub.get("data") or {}
             is_ch_keyed_admin = any(k in CHANNELS for k in ch_raw) if ch_raw else False
-            saved    = ch_raw.get(ch_param, {}) if is_ch_keyed_admin else ch_raw
-            sub      = ch_sub
+            saved   = ch_raw.get(ch_param, {}) if is_ch_keyed_admin else ch_raw
+            sub     = ch_sub
         else:
             member_ch = None
     else:
@@ -532,11 +533,11 @@ def api_load_drr(qkey):
     allowed_months = _refill_allowed_months(qkey)
     locked_months  = _locked_months_in_quarter(qkey)
 
-    # Resolve saved data for the active channel (handles new channel-keyed + legacy flat)
+    # Resolve saved data for active channel (channel-keyed new format + legacy flat)
     if not is_adm:
         is_ch_keyed = any(k in CHANNELS for k in raw_data) if raw_data else False
         saved = raw_data.get(member_ch, {}) if is_ch_keyed else raw_data
-    # (admin path: saved already set above)
+    # (admin path: saved already set above from ch_raw)
 
     rows = []
     for row in drr_data:
@@ -565,7 +566,8 @@ def api_load_drr(qkey):
         "drr_labels":    DRR_LABELS,
         "drr_short":     DRR_SHORT,
         "user_channel":  member_ch,
-        "user_channels": member_channels if not is_adm else None,
+        # FIX: always return user_channels for multi-channel members
+        "user_channels": (member_channels if member_channels else None) if not is_adm else None,
         "all_channels":  CHANNELS if not member_ch else None,
         "submitted":     sub.get("submitted", False),
         "submitted_at":  sub.get("submitted_at",""),
@@ -589,22 +591,29 @@ def api_save_draft(qkey):
     sub   = _sub_get(qkey, email)
     if sub["submitted"]:
         return jsonify({"error":"Already submitted — cannot save draft"}), 409
-    rows = request.json.get("rows",[])
-    data = {row.get("_row_id",""): {m: row.get(m,"") for m in QUARTERS[qkey]["months"]} for row in rows}
-    # Multi-channel: store data under the correct channel key
+
+    # FIX: read entire body once so both rows and channel are available
+    body = request.json or {}
+    rows = body.get("rows", [])
     member_channels = CHANNEL_MAP.get(email) or []
-    ch_param = (request.json or {}).get("channel") or request.args.get("channel") or None
+    ch_param = body.get("channel") or request.args.get("channel") or None
     member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
+
+    # Build this channel's data from rows
+    data = {row.get("_row_id",""): {m: row.get(m,"") for m in QUARTERS[qkey]["months"]} for row in rows}
+
+    # Merge into channel-keyed store — preserves other channels
     existing = dict(_sub_get(qkey, email).get("data") or {})
     if existing and not any(k in CHANNELS for k in existing):
+        # Legacy flat — migrate under first channel
         existing = {(member_channels[0] if member_channels else "unknown"): existing}
     if member_ch:
         existing[member_ch] = data
         merged = existing
     else:
-        merged = data
+        merged = data  # admin or unassigned — store flat
     _sub_set(qkey, email, {"data": merged, "user_name": _name()})
-    return jsonify({"status":"saved"})
+    return jsonify({"status": "saved", "channel": member_ch})
 
 # ── API: Submit ────────────────────────────────────────────────────────────────
 @app.route("/api/submit/<qkey>", methods=["POST"])
@@ -617,7 +626,9 @@ def api_submit(qkey):
     if sub["submitted"]:
         return jsonify({"error":"Already submitted","submitted_at":sub["submitted_at"]}), 409
 
-    rows = request.json.get("rows",[])
+    # FIX: read entire body once
+    body_data = request.json or {}
+    rows = body_data.get("rows", [])
     if not rows: return jsonify({"error":"No data"}), 400
 
     months = QUARTERS[qkey]["months"]
@@ -635,14 +646,12 @@ def api_submit(qkey):
 
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
 
-    # Multi-channel support: store per-channel, not flat
+    # Multi-channel support: each channel stored separately
     member_channels = CHANNEL_MAP.get(email) or []
-    member_ch = member_channels[0] if member_channels else None
-    ch_param = (request.json or {}).get("channel") or request.args.get("channel") or None
-    if ch_param and ch_param in member_channels:
-        member_ch = ch_param
+    ch_param = body_data.get("channel") or request.args.get("channel") or None
+    member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
 
-    # Merge into channel-keyed store so submitting Channel B doesn't erase Channel A
+    # Merge into channel-keyed store — Channel B submit does NOT erase Channel A
     existing_data = dict(_sub_get(qkey, email).get("data") or {})
     if existing_data and not any(k in CHANNELS for k in existing_data):
         legacy_ch = (member_channels[0] if member_channels else "unknown")
@@ -651,7 +660,7 @@ def api_submit(qkey):
         existing_data[member_ch] = data
         merged_data = existing_data
     else:
-        merged_data = data  # admin / no-channel — unchanged
+        merged_data = data  # admin / no-channel
 
     q_master  = _q_get(qkey)
     drr_lookup = {p["_row_id"]: p.get("_drr", {}) for p in (q_master.get("drr_data") or [])}
@@ -957,24 +966,8 @@ def api_get_ticker():
 def api_upload_excel_fill(qkey):
     """
     Upload a filled Excel file and merge forecast values into the member's draft.
-
-    FIX: Empty / zero cells in the uploaded Excel now OVERWRITE previously saved
-    draft values with 0, instead of being silently skipped. This ensures that if
-    a user clears a cell in their Excel and re-uploads, the cleared value is
-    correctly reflected in the draft rather than the old value persisting.
-
-    Channel enforcement rule
-    ─────────────────────────
-    Every non-admin user has exactly one channel assigned via CHANNEL_MAP.
-    This function ONLY reads columns that belong to that channel.
-
-    Accepted column formats for the member's channel (e.g. "Amazon"):
-      1. Plain month names ("April", "May", "June")
-      2. Prefixed month names ("Amazon April", "Amazon May", "Amazon June")
-
-    Columns for OTHER channels are silently ignored.
+    Channel enforcement: only reads columns for the member's active channel.
     """
-    # ── Gate: feature flag ─────────────────────────────────────────────────────
     flags = _get_flags()
     if not flags.get("upload_excel_fill", True):
         return jsonify({"error": "Excel upload is currently disabled by admin."}), 403
@@ -1004,7 +997,7 @@ def api_upload_excel_fill(qkey):
     drr_data = q.get("drr_data") or []
     saved    = sub.get("data") or {}
 
-    # ── Determine channel scope ────────────────────────────────────────────────
+    # Determine channel scope
     if is_adm:
         member_ch = request.args.get("channel") or None
     else:
@@ -1026,7 +1019,6 @@ def api_upload_excel_fill(qkey):
         if len(all_xl_rows) < 2:
             return jsonify({"error": "File is empty or too small."}), 422
 
-        # ── Step 1: Locate header row + build month_col_map ───────────────────
         header_row_idx = None
         month_col_map  = {}
         _best_score    = 0
@@ -1034,7 +1026,6 @@ def api_upload_excel_fill(qkey):
         for ri, row in enumerate(all_xl_rows):
             cells = [str(c or "").strip() for c in row]
 
-            # Priority A: channel-prefixed columns
             if member_ch:
                 ch_map = {}
                 for ci, cell in enumerate(cells):
@@ -1048,7 +1039,6 @@ def api_upload_excel_fill(qkey):
                     if len(ch_map) == len(months):
                         break
 
-            # Priority B: plain month names
             plain_map = {}
             for ci, cell in enumerate(cells):
                 for m in months:
@@ -1061,7 +1051,6 @@ def api_upload_excel_fill(qkey):
                 if not member_ch:
                     break
 
-        # ── Validation: did we find the right columns? ─────────────────────────
         if not month_col_map:
             if member_ch:
                 prefixed = ", ".join(f"{member_ch} {m}" for m in months)
@@ -1101,7 +1090,6 @@ def api_upload_excel_fill(qkey):
                     "error": f"Some month columns are missing: {', '.join(missing_months)}."
                 }), 422
 
-        # ── Step 2: Find SKU column in the header row ─────────────────────────
         sku_col = None
         if header_row_idx is not None:
             hdr = [str(c or "").strip() for c in all_xl_rows[header_row_idx]]
@@ -1110,7 +1098,6 @@ def api_upload_excel_fill(qkey):
                     sku_col = ci
                     break
 
-        # ── Step 3: Build SKU / Product Name → row_id lookup ─────────────────
         sku_to_rowid  = {}
         name_to_rowid = {}
         for prod in drr_data:
@@ -1120,52 +1107,37 @@ def api_upload_excel_fill(qkey):
             if sku:  sku_to_rowid[sku.lower()]   = rid
             if name: name_to_rowid[name.lower()]  = rid
 
-        # ── Step 4: Parse data rows — channel-scoped ──────────────────────────
-        # KEY FIX: We now track which row_ids were matched in this upload.
-        # For every matched row, ALL month columns are written unconditionally:
-        #   - Numeric value  → stored as float
-        #   - Empty / blank  → stored as 0  (overwrites any previous draft value)
-        # This ensures cleared cells in the Excel correctly reset to 0 rather
-        # than retaining the previously saved value.
-
         SKIP_PATTERNS = {"instruction", "do not edit", "(example)", "fill in",
                          "instructions:", "note:"}
 
-        filled         = 0   # count of non-zero values written
-        zeroed         = 0   # count of cells explicitly set to 0
-        skipped        = 0   # rows where SKU was not found in master list
+        filled         = 0
+        zeroed         = 0
+        skipped        = 0
         matched_rowids = set()
 
-        # Start from existing draft — we will selectively overwrite matched rows
         merged = dict(saved)
 
         for row in all_xl_rows[header_row_idx + 1:]:
             cells = [str(c or "").strip() for c in row]
 
-            # Skip blank rows
             if not any(cells):
                 continue
 
-            # Skip instruction / note rows
             first_cell = cells[0].lower() if cells else ""
             if any(p in first_cell for p in SKIP_PATTERNS):
                 continue
 
-            # ── Identify product by SKU (three-level matching) ─────────────────
             row_id = None
 
             if sku_col is not None and sku_col < len(cells):
                 sku_val = cells[sku_col].lower()
-                # Level 1: exact match
                 row_id = sku_to_rowid.get(sku_val) or name_to_rowid.get(sku_val)
-                # Level 2: partial substring match
                 if not row_id and sku_val:
                     for k, v in sku_to_rowid.items():
                         if k and sku_val and (k in sku_val or sku_val in k):
                             row_id = v
                             break
 
-            # Level 3: scan every cell in the row
             if not row_id:
                 for cell_val in cells:
                     cv = cell_val.lower()
@@ -1177,8 +1149,6 @@ def api_upload_excel_fill(qkey):
                 skipped += 1
                 continue
 
-            # ── Write ALL month values for this matched row ────────────────────
-            # Initialise the row in merged if it doesn't exist yet
             if row_id not in merged:
                 merged[row_id] = {}
 
@@ -1190,7 +1160,6 @@ def api_upload_excel_fill(qkey):
                     raw_str = str(raw).strip() if raw is not None else ""
 
                     if raw_str in ("", "-", "—", "None"):
-                        # Empty cell → write 0, overwriting any previous draft value
                         merged[row_id][month] = 0
                         zeroed += 1
                     else:
@@ -1202,15 +1171,12 @@ def api_upload_excel_fill(qkey):
                             else:
                                 zeroed += 1
                         except ValueError:
-                            # Non-numeric value → treat as 0
                             merged[row_id][month] = 0
                             zeroed += 1
                 else:
-                    # Column index out of range → write 0
                     merged[row_id][month] = 0
                     zeroed += 1
 
-        # ── Validation: did we actually match any products? ────────────────────
         if not matched_rowids:
             ch_hint = f" for channel '{member_ch}'" if member_ch else ""
             return jsonify({
@@ -1221,10 +1187,11 @@ def api_upload_excel_fill(qkey):
                 )
             }), 422
 
-        # Store under channel key, preserving other channels
+        # FIX: Store under channel key — preserves data for other channels
         existing_upload = dict(_sub_get(qkey, email).get("data") or {})
+        member_channels_all = CHANNEL_MAP.get(email) or []
         if existing_upload and not any(k in CHANNELS for k in existing_upload):
-            first_ch = (CHANNEL_MAP.get(email) or ["unknown"])[0]
+            first_ch = member_channels_all[0] if member_channels_all else "unknown"
             existing_upload = {first_ch: existing_upload}
         if member_ch:
             existing_upload[member_ch] = merged
@@ -1298,10 +1265,6 @@ def _parse_drr_excel(source):
     return rows, channels_found
 
 def _create_quarter_template(qkey, dest):
-    """
-    Generate a master forecast template with all products pre-filled
-    and blank forecast month columns for members to fill in.
-    """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
@@ -1319,7 +1282,6 @@ def _create_quarter_template(qkey, dest):
     ws = wb.active
     ws.title = "Forecast " + qkey
 
-    # Row 1: Group labels
     ws.merge_cells(start_row=1, start_column=1,
                    end_row=1, end_column=len(PROD_COLS))
     hdr_prod = ws.cell(row=1, column=1, value="PRODUCT INFO (do not edit)")
@@ -1338,7 +1300,6 @@ def _create_quarter_template(qkey, dest):
     hdr_mon.border    = bdr_hdr
     ws.row_dimensions[1].height = 22
 
-    # Row 2: Column headers
     for ci, h in enumerate(all_headers, 1):
         cell = ws.cell(row=2, column=ci, value=h)
         is_month = h in months
@@ -1352,7 +1313,6 @@ def _create_quarter_template(qkey, dest):
         cell.border    = bdr_hdr
     ws.row_dimensions[2].height = 28
 
-    # Data rows
     q        = _q_get(qkey)
     drr_data = q.get("drr_data") or []
 
@@ -1417,9 +1377,6 @@ def _create_quarter_template(qkey, dest):
 
 
 def _save_submission_excel(rows, username, qkey, months, dest, member_channel=None):
-    """
-    Generate the submission Excel saved at submit time.
-    """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
@@ -1449,7 +1406,6 @@ def _save_submission_excel(rows, username, qkey, months, dest, member_channel=No
 
     total_cols = len(BASE_COLS_DRR) + n_drr_cols + len(months)
 
-    # Row 1: Title bar
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
     tc = ws.cell(row=1, column=1,
                  value="Forecast — " + qkey + " — " + username +
@@ -1459,7 +1415,6 @@ def _save_submission_excel(rows, username, qkey, months, dest, member_channel=No
     tc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     ws.row_dimensions[1].height = 28
 
-    # Row 2: Group labels
     col = 1
     def _mhdr(r, c, span, text, bg, txt_color="FFFFFF"):
         if span > 1:
@@ -1482,7 +1437,6 @@ def _save_submission_excel(rows, username, qkey, months, dest, member_channel=No
     _mhdr(2, col, len(months), "FORECAST — " + QUARTERS[qkey]["label"], "40916C")
     ws.row_dimensions[2].height = 22
 
-    # Row 3: Column headers
     col = 1
     for h in BASE_COLS_DRR:
         cell = ws.cell(row=3, column=col, value=h)
@@ -1511,10 +1465,8 @@ def _save_submission_excel(rows, username, qkey, months, dest, member_channel=No
         col += 1
     ws.row_dimensions[3].height = 26
 
-    # Data rows
     for ri, row in enumerate(rows, 4):
         even = ri % 2 == 0
-
         col = 1
         for h in BASE_COLS_DRR:
             cell = ws.cell(row=ri, column=col, value=row.get(h, ""))
@@ -1655,20 +1607,19 @@ def _export_quarter_excel(qkey, q, dest):
         m_name        = sub.get("user_name", m_email.split("@")[0])
         submitted_at  = sub.get("submitted_at","")
         is_ch_keyed_ex = any(k in CHANNELS for k in raw_exp) if raw_exp else False
-        # Emit one row-block per channel the user is assigned to
         export_channels = member_chs_ex if member_chs_ex else ["Unassigned"]
         for export_ch in export_channels:
             if is_ch_keyed_ex:
-                saved = raw_exp.get(export_ch, {})
+                saved_ch = raw_exp.get(export_ch, {})
             else:
                 # Legacy flat data: show under first channel only
-                saved = raw_exp if export_ch == export_channels[0] else {}
+                saved_ch = raw_exp if export_ch == export_channels[0] else {}
             ch_display = export_ch
             even = data_ri % 2 == 0
             for prod in drr_data:
-                rid    = prod.get("_row_id","")
-                drr_all= prod.get("_drr", {})
-                f_vals = saved.get(rid, {})
+                rid     = prod.get("_row_id","")
+                drr_all = prod.get("_drr", {})
+                f_vals  = saved_ch.get(rid, {})
                 row_vals = [prod.get(c,"") for c in prod_cols]
                 for pch in CHANNELS:
                     ch_drr = drr_all.get(pch, {})
