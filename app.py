@@ -80,9 +80,8 @@ FORECAST_MEMBERS = [e.strip().lower() for e in os.getenv("FORECAST_MEMBERS","").
 
 def _build_channel_map():
     """
-    Returns {email: [channel, ...]}
-    Supports one OR multiple channels per user.
-    e.g. CHANNEL_MAP=alice@x.com:D2C,alice@x.com:Amazon,bob@x.com:Retail
+    Returns {email: [channel, ...]}  — supports multiple channels per user.
+    CHANNEL_MAP=alice@x.com:D2C,alice@x.com:Amazon,bob@x.com:Retail
     """
     m = {}
     for part in os.getenv("CHANNEL_MAP","").split(","):
@@ -504,22 +503,28 @@ def api_load_drr(qkey):
     drr_data = q.get("drr_data") or []
     sub      = _sub_get(qkey, email)
     raw_data = sub.get("data") or {}
+    saved    = raw_data  # default; overridden below per branch
+    member_channels = []  # filled for non-admin users below
 
     if is_adm:
         ch_param = request.args.get("channel") or None
         if ch_param:
             member_ch = ch_param
-            member_email = next((e for e, c in CHANNEL_MAP.items() if c == ch_param), None)
-            ch_sub = _sub_get(qkey, member_email) if member_email else _sub_default()
-            saved  = ch_sub.get("data") or {}
-            sub    = ch_sub
+            # CHANNEL_MAP now returns lists — find the member who has this channel
+            member_email = next(
+                (e for e, chs in CHANNEL_MAP.items() if ch_param in chs), None
+            )
+            ch_sub   = _sub_get(qkey, member_email) if member_email else _sub_default()
+            ch_raw   = ch_sub.get("data") or {}
+            is_ch_keyed_admin = any(k in CHANNELS for k in ch_raw) if ch_raw else False
+            saved    = ch_raw.get(ch_param, {}) if is_ch_keyed_admin else ch_raw
+            sub      = ch_sub
         else:
             member_ch = None
     else:
         member_channels = CHANNEL_MAP.get(email) or []
         if not member_channels:
             return jsonify({"error": "You are not assigned to a channel. Contact admin to set CHANNEL_MAP in .env."}), 400
-        # Support ?channel= to switch active channel for multi-channel users
         ch_param_user = request.args.get("channel") or None
         member_ch = ch_param_user if ch_param_user in member_channels else member_channels[0]
 
@@ -527,12 +532,11 @@ def api_load_drr(qkey):
     allowed_months = _refill_allowed_months(qkey)
     locked_months  = _locked_months_in_quarter(qkey)
 
-    # Resolve saved forecast data for the active channel (supports channel-keyed + legacy flat)
-    is_channel_keyed = any(k in CHANNELS for k in raw_data) if raw_data else False
-    if is_channel_keyed:
-        saved = raw_data.get(member_ch, {}) if member_ch else raw_data
-    else:
-        saved = raw_data  # legacy flat or admin view
+    # Resolve saved data for the active channel (handles new channel-keyed + legacy flat)
+    if not is_adm:
+        is_ch_keyed = any(k in CHANNELS for k in raw_data) if raw_data else False
+        saved = raw_data.get(member_ch, {}) if is_ch_keyed else raw_data
+    # (admin path: saved already set above)
 
     rows = []
     for row in drr_data:
@@ -561,7 +565,7 @@ def api_load_drr(qkey):
         "drr_labels":    DRR_LABELS,
         "drr_short":     DRR_SHORT,
         "user_channel":  member_ch,
-        "user_channels": member_channels if not is_adm else None,  # list of channels for this user
+        "user_channels": member_channels if not is_adm else None,
         "all_channels":  CHANNELS if not member_ch else None,
         "submitted":     sub.get("submitted", False),
         "submitted_at":  sub.get("submitted_at",""),
@@ -587,7 +591,7 @@ def api_save_draft(qkey):
         return jsonify({"error":"Already submitted — cannot save draft"}), 409
     rows = request.json.get("rows",[])
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in QUARTERS[qkey]["months"]} for row in rows}
-    # Multi-channel: merge into channel-keyed store
+    # Multi-channel: store data under the correct channel key
     member_channels = CHANNEL_MAP.get(email) or []
     ch_param = (request.json or {}).get("channel") or request.args.get("channel") or None
     member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
@@ -631,26 +635,23 @@ def api_submit(qkey):
 
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
 
-    # ── Multi-channel support ──────────────────────────────────────────────────
+    # Multi-channel support: store per-channel, not flat
     member_channels = CHANNEL_MAP.get(email) or []
     member_ch = member_channels[0] if member_channels else None
-    # Frontend sends ?channel= (or in body) so we know which channel is being submitted
     ch_param = (request.json or {}).get("channel") or request.args.get("channel") or None
     if ch_param and ch_param in member_channels:
         member_ch = ch_param
 
-    # Merge this channel's data into the per-channel store (preserves other channels)
-    existing_sub  = _sub_get(qkey, email)
-    existing_data = dict(existing_sub.get("data") or {})
+    # Merge into channel-keyed store so submitting Channel B doesn't erase Channel A
+    existing_data = dict(_sub_get(qkey, email).get("data") or {})
     if existing_data and not any(k in CHANNELS for k in existing_data):
-        # Legacy flat structure — migrate under the user's first known channel
-        legacy_ch = existing_sub.get("channel") or (member_channels[0] if member_channels else "unknown")
+        legacy_ch = (member_channels[0] if member_channels else "unknown")
         existing_data = {legacy_ch: existing_data}
     if member_ch:
         existing_data[member_ch] = data
         merged_data = existing_data
     else:
-        merged_data = data  # admin / no-channel path — unchanged behaviour
+        merged_data = data  # admin / no-channel — unchanged
 
     q_master  = _q_get(qkey)
     drr_lookup = {p["_row_id"]: p.get("_drr", {}) for p in (q_master.get("drr_data") or [])}
@@ -1007,12 +1008,14 @@ def api_upload_excel_fill(qkey):
     if is_adm:
         member_ch = request.args.get("channel") or None
     else:
-        member_ch = CHANNEL_MAP.get(email)
-        if not member_ch:
+        member_channels_upload = CHANNEL_MAP.get(email) or []
+        if not member_channels_upload:
             return jsonify({
                 "error": "You are not assigned to a channel. "
                          "Ask admin to set your channel in CHANNEL_MAP."
             }), 400
+        ch_param_up = request.args.get("channel") or None
+        member_ch = ch_param_up if ch_param_up in member_channels_upload else member_channels_upload[0]
 
     try:
         import openpyxl
@@ -1218,7 +1221,17 @@ def api_upload_excel_fill(qkey):
                 )
             }), 422
 
-        _sub_set(qkey, email, {"data": merged, "user_name": _name()})
+        # Store under channel key, preserving other channels
+        existing_upload = dict(_sub_get(qkey, email).get("data") or {})
+        if existing_upload and not any(k in CHANNELS for k in existing_upload):
+            first_ch = (CHANNEL_MAP.get(email) or ["unknown"])[0]
+            existing_upload = {first_ch: existing_upload}
+        if member_ch:
+            existing_upload[member_ch] = merged
+            final_merged = existing_upload
+        else:
+            final_merged = merged
+        _sub_set(qkey, email, {"data": final_merged, "user_name": _name()})
 
         ch_label      = f" [{member_ch}]" if member_ch else ""
         products_hit  = len(matched_rowids)
@@ -1580,8 +1593,8 @@ def _export_quarter_excel(qkey, q, dest):
     locked_months = _locked_months_in_quarter(qkey)
     for m_email in all_members:
         sub = all_subs.get(m_email, _sub_default())
-        member_chs = CHANNEL_MAP.get(m_email) or []
-        ch  = ", ".join(member_chs) if member_chs else "Unassigned"
+        member_chs_exp = CHANNEL_MAP.get(m_email) or []
+        ch  = ", ".join(member_chs_exp) if member_chs_exp else "Unassigned"
         row = [ch, sub.get("user_name", m_email), m_email,
                "Submitted" if sub.get("submitted") else "Pending",
                sub.get("submitted_at",""), sub.get("revision",0),
@@ -1635,57 +1648,55 @@ def _export_quarter_excel(qkey, q, dest):
     ws.row_dimensions[2].height = 32
     data_ri = 3
     for m_email in all_members:
-        sub   = all_subs.get(m_email, _sub_default())
-        raw_data = sub.get("data") or {}
-        member_channels = CHANNEL_MAP.get(m_email) or []
-        ch    = ", ".join(member_channels) if member_channels else "Unassigned"
-        m_name= sub.get("user_name", m_email.split("@")[0])
-        submitted_at = sub.get("submitted_at","")
-        even  = data_ri % 2 == 0
-
-        # Detect per-channel data structure vs legacy flat structure
-        is_channel_keyed = any(k in CHANNELS for k in raw_data) if raw_data else False
-
-        # Emit one block of rows per channel the user has filled
-        channels_to_export = member_channels if member_channels else ["Unassigned"]
-        for export_ch in channels_to_export:
-            if is_channel_keyed:
-                saved = raw_data.get(export_ch, {})
+        sub      = all_subs.get(m_email, _sub_default())
+        raw_exp  = sub.get("data") or {}
+        member_chs_ex = CHANNEL_MAP.get(m_email) or []
+        ch_label_ex   = ", ".join(member_chs_ex) if member_chs_ex else "Unassigned"
+        m_name        = sub.get("user_name", m_email.split("@")[0])
+        submitted_at  = sub.get("submitted_at","")
+        is_ch_keyed_ex = any(k in CHANNELS for k in raw_exp) if raw_exp else False
+        # Emit one row-block per channel the user is assigned to
+        export_channels = member_chs_ex if member_chs_ex else ["Unassigned"]
+        for export_ch in export_channels:
+            if is_ch_keyed_ex:
+                saved = raw_exp.get(export_ch, {})
             else:
-                # Legacy flat data — only show under their single channel
-                saved = raw_data if export_ch == (member_channels[0] if member_channels else "Unassigned") else {}
-        for prod in drr_data:
-            rid    = prod.get("_row_id","")
-            drr_all= prod.get("_drr", {})
-            f_vals = saved.get(rid, {})
-            row_vals = [prod.get(c,"") for c in prod_cols]
-            for pch in CHANNELS:
-                ch_drr = drr_all.get(pch, {})
-                for dl in DRR_LABELS:
-                    v = ch_drr.get(dl, "")
-                    row_vals.append(round(float(v),2) if v else "")
-            row_vals += [m_name, ch, submitted_at]
-            for m in months:
-                row_vals.append(f_vals.get(m,""))
-            for ci, val in enumerate(row_vals, 1):
-                cell = ws.cell(row=data_ri, column=ci, value=val)
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-                cell.border = bdr
-                cell.font = Font(name="Calibri", size=9)
-                if ci <= len(prod_cols): bg = BG_PROD if even else "E8F5EC"
-                elif ci <= len(prod_cols)+len(drr_ch_cols):
-                    ch_idx = (ci - len(prod_cols) - 1) // len(DRR_SHORT)
-                    base   = ch_color_map.get(CHANNELS[ch_idx] if ch_idx < len(CHANNELS) else "", BG_DRR)
-                    bg     = base if even else "F5F3FF"
-                elif ci <= len(prod_cols)+len(drr_ch_cols)+len(meta_cols):
-                    bg = BG_META if even else "D8F3DC"
-                else:
-                    bg = BG_MON if even else "F0FFF4"
-                    if val == "" and sub.get("submitted"):
-                        bg = "FEE2E2"
-                cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-            ws.row_dimensions[data_ri].height = 18
-            data_ri += 1
+                # Legacy flat data: show under first channel only
+                saved = raw_exp if export_ch == export_channels[0] else {}
+            ch_display = export_ch
+            even = data_ri % 2 == 0
+            for prod in drr_data:
+                rid    = prod.get("_row_id","")
+                drr_all= prod.get("_drr", {})
+                f_vals = saved.get(rid, {})
+                row_vals = [prod.get(c,"") for c in prod_cols]
+                for pch in CHANNELS:
+                    ch_drr = drr_all.get(pch, {})
+                    for dl in DRR_LABELS:
+                        v = ch_drr.get(dl, "")
+                        row_vals.append(round(float(v),2) if v else "")
+                row_vals += [m_name, ch_display, submitted_at]
+                for m in months:
+                    row_vals.append(f_vals.get(m,""))
+                for ci, val in enumerate(row_vals, 1):
+                    cell = ws.cell(row=data_ri, column=ci, value=val)
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                    cell.border = bdr
+                    cell.font = Font(name="Calibri", size=9)
+                    if ci <= len(prod_cols): bg = BG_PROD if even else "E8F5EC"
+                    elif ci <= len(prod_cols)+len(drr_ch_cols):
+                        ch_idx = (ci - len(prod_cols) - 1) // len(DRR_SHORT)
+                        base   = ch_color_map.get(CHANNELS[ch_idx] if ch_idx < len(CHANNELS) else "", BG_DRR)
+                        bg     = base if even else "F5F3FF"
+                    elif ci <= len(prod_cols)+len(drr_ch_cols)+len(meta_cols):
+                        bg = BG_META if even else "D8F3DC"
+                    else:
+                        bg = BG_MON if even else "F0FFF4"
+                        if val == "" and sub.get("submitted"):
+                            bg = "FEE2E2"
+                    cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+                ws.row_dimensions[data_ri].height = 18
+                data_ri += 1
     for ci in range(1, len(prod_cols)+1):
         ws.column_dimensions[get_column_letter(ci)].width = 16
     for ci in range(len(prod_cols)+1, len(prod_cols)+len(drr_ch_cols)+1):
