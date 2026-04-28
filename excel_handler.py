@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # ─── Schema ───────────────────────────────────────────────────────────────────
 
-CHANNELS = ["D2C", "M-B2B", "M-B2C", "Retail", "Export", "Amazon", "Flipkart"]
+CHANNELS = ["D2C", "M-B2B", "M-B2C", "Retail", "Export", "Amazon", "Flipkart", "Myntra"]
 DRR_PERIODS = [15, 30, 45, 60]
 
 FIXED_COLUMNS = ["Category", "Sub Category", "Product Name / SKU"]
