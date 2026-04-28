@@ -667,7 +667,15 @@ def api_submit(qkey):
                 row["_ref"] = row["_refs"].get(member_ch, {})
 
     buf = io.BytesIO()
-    _save_submission_excel(rows, name, qkey, months, buf, member_channel=member_ch)
+    # If the user has forecast data for more than one channel, build an all-channels
+    # Excel so the downloaded file contains the full picture across every channel.
+    active_chs_in_data = [ch for ch in CHANNELS if ch in merged_data and merged_data[ch]]
+    if len(active_chs_in_data) > 1:
+        _save_submission_excel_multi_channel(
+            merged_data, q_master.get("drr_data") or [],
+            name, qkey, months, buf)
+    else:
+        _save_submission_excel(rows, name, qkey, months, buf, member_channel=member_ch)
     buf.seek(0)
     eb   = buf.read()
 
@@ -1511,6 +1519,158 @@ def _save_submission_excel(rows, username, qkey, months, dest, member_channel=No
 
     ws.freeze_panes = get_column_letter(len(BASE_COLS_DRR)+1) + "4"
     wb.save(dest)
+
+
+def _save_submission_excel_multi_channel(merged_data, drr_data, username, qkey, months, dest):
+    """
+    Build a submission Excel that shows ALL channels the user has submitted.
+    merged_data : { channel_name -> { row_id -> { month -> value } } }
+    drr_data    : list of product dicts (from q_master["drr_data"])
+    Each channel gets its own group of forecast-month columns, labelled with
+    the channel name as the group header.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    # Colours
+    C_DARK   = "1B4332"
+    C_MID    = "2D6A4F"
+    C_PALE   = "D8F3DC"
+    C_LIGHT  = "E8F5EC"
+    C_WHITE  = "FFFFFF"
+    C_GREY   = "F0FFF4"
+
+    # Channel palette — cycle through distinct greens/teals for each channel
+    CHANNEL_PALETTES = [
+        ("40916C", "D8F3DC", "E8F5EC"),   # green
+        ("1D6A96", "D0EAF8", "E3F3FC"),   # blue
+        ("7B3FA0", "EAD5F5", "F3E8FC"),   # purple
+        ("C05621", "FDEBD0", "FEF3E4"),   # orange
+        ("B7451F", "FDDBD0", "FEF0EB"),   # red-orange
+        ("1A7A5E", "C8F0E4", "DFF7F0"),   # teal
+        ("8B6914", "FBF0C8", "FEF7E4"),   # amber
+    ]
+
+    bdr = Border(**{s: Side(style="thin", color="DEE2E6")
+                    for s in ["left", "right", "top", "bottom"]})
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Forecast Submission"
+
+    # Only include channels that have actual data in merged_data
+    active_channels = [ch for ch in CHANNELS if ch in merged_data and merged_data[ch]]
+    if not active_channels:
+        active_channels = list(merged_data.keys())
+
+    # Column layout: BASE_COLS_DRR + (months × channel) for each active channel
+    n_base   = len(BASE_COLS_DRR)
+    n_months = len(months)
+    total_cols = n_base + n_months * len(active_channels)
+
+    today_str = datetime.date.today().strftime("%d %b %Y")
+
+    # ── Row 1: Title bar ──────────────────────────────────────────────────────
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+    tc = ws.cell(row=1, column=1,
+                 value=f"Forecast — {qkey} — {username} — {today_str}  |  All Channels")
+    tc.font      = Font(bold=True, color=C_WHITE, name="Calibri", size=12)
+    tc.fill      = PatternFill(start_color=C_DARK, end_color=C_DARK, fill_type="solid")
+    tc.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[1].height = 28
+
+    # ── Row 2: Section headers (Product Info | Channel A | Channel B …) ───────
+    # Product info block
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_base)
+    h = ws.cell(row=2, column=1, value="PRODUCT INFO")
+    h.font      = Font(bold=True, color=C_WHITE, name="Calibri", size=9)
+    h.fill      = PatternFill(start_color=C_DARK, end_color=C_DARK, fill_type="solid")
+    h.alignment = Alignment(horizontal="center", vertical="center")
+    h.border    = bdr
+
+    # One group per channel
+    col_offset = n_base + 1
+    for ci, ch in enumerate(active_channels):
+        hdr_bg, _, _ = CHANNEL_PALETTES[ci % len(CHANNEL_PALETTES)]
+        ws.merge_cells(start_row=2, start_column=col_offset,
+                       end_row=2, end_column=col_offset + n_months - 1)
+        cell = ws.cell(row=2, column=col_offset, value=f"FORECAST — {ch}")
+        cell.font      = Font(bold=True, color=C_WHITE, name="Calibri", size=9)
+        cell.fill      = PatternFill(start_color=hdr_bg, end_color=hdr_bg, fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = bdr
+        col_offset    += n_months
+    ws.row_dimensions[2].height = 22
+
+    # ── Row 3: Column sub-headers ─────────────────────────────────────────────
+    for ci_b, h_name in enumerate(BASE_COLS_DRR, 1):
+        cell = ws.cell(row=3, column=ci_b, value=h_name)
+        cell.font      = Font(bold=True, color=C_WHITE, name="Calibri", size=9)
+        cell.fill      = PatternFill(start_color=C_MID, end_color=C_MID, fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = bdr
+
+    col_offset = n_base + 1
+    for ci, ch in enumerate(active_channels):
+        _, sub_bg, _ = CHANNEL_PALETTES[ci % len(CHANNEL_PALETTES)]
+        hdr_bg, _, _ = CHANNEL_PALETTES[ci % len(CHANNEL_PALETTES)]
+        for m in months:
+            cell = ws.cell(row=3, column=col_offset, value=m)
+            cell.font      = Font(bold=True, color=C_WHITE, name="Calibri", size=9)
+            cell.fill      = PatternFill(start_color=hdr_bg, end_color=hdr_bg, fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border    = bdr
+            col_offset    += 1
+    ws.row_dimensions[3].height = 26
+
+    # ── Rows 4+: Data ─────────────────────────────────────────────────────────
+    for ri, prod in enumerate(drr_data, 4):
+        even = ri % 2 == 0
+        rid  = prod.get("_row_id", "")
+
+        # Product info columns
+        for ci_b, h_name in enumerate(BASE_COLS_DRR, 1):
+            val  = prod.get(h_name, "")
+            cell = ws.cell(row=ri, column=ci_b, value=val)
+            cell.fill      = PatternFill(start_color=C_PALE if even else C_LIGHT,
+                                         end_color=C_PALE if even else C_LIGHT,
+                                         fill_type="solid")
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+            cell.border    = bdr
+            cell.font      = Font(name="Calibri", size=9)
+
+        # Channel forecast columns
+        col_offset = n_base + 1
+        for ci, ch in enumerate(active_channels):
+            _, data_bg_even, data_bg_odd = CHANNEL_PALETTES[ci % len(CHANNEL_PALETTES)]
+            ch_data = merged_data.get(ch, {})
+            row_vals = ch_data.get(rid, {})
+            for m in months:
+                v    = row_vals.get(m, "")
+                cell = ws.cell(row=ri, column=col_offset, value=v if v != "" else "")
+                cell.fill      = PatternFill(
+                    start_color=data_bg_even if even else data_bg_odd,
+                    end_color=data_bg_even if even else data_bg_odd,
+                    fill_type="solid")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.border    = bdr
+                cell.font      = Font(name="Calibri", size=9)
+                if v != "":
+                    cell.number_format = "#,##0.00"
+                col_offset += 1
+
+        ws.row_dimensions[ri].height = 18
+
+    # Column widths
+    for ci in range(1, n_base + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 16
+    for ci in range(n_base + 1, total_cols + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = 14
+
+    ws.freeze_panes = get_column_letter(n_base + 1) + "4"
+    wb.save(dest)
+
 
 def _export_quarter_excel(qkey, q, dest):
     from openpyxl import Workbook
