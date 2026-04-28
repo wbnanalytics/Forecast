@@ -170,7 +170,8 @@ def _sub_default():
         data=None, user_name="", revision=0,
         refill_requested=False, refill_reason="",
         refill_cooldown_until=None,
-        excel_bytes=None, file="", channel=""
+        excel_bytes=None, file="", channel="",
+        submitted_channels=[]
     )
 
 def _is_channel_keyed(data):
@@ -182,6 +183,34 @@ def _wrap_legacy_data(raw_data, email, preferred_channel=None):
     member_channels = CHANNEL_MAP.get((email or '').lower()) or []
     channel = preferred_channel or (member_channels[0] if member_channels else 'Unassigned')
     return {channel: raw_data}
+
+
+def _submitted_channels(sub, email=None):
+    """Return channels already submitted. Falls back to data keys for old DB rows."""
+    chans = sub.get("submitted_channels") or []
+    if isinstance(chans, str):
+        chans = [chans] if chans else []
+    if chans:
+        return [c for c in chans if c]
+
+    raw = sub.get("data") or {}
+    if sub.get("submitted") and _is_channel_keyed(raw):
+        return [ch for ch in CHANNELS if ch in raw and raw.get(ch)]
+    if sub.get("submitted") and sub.get("channel"):
+        return [sub.get("channel")]
+    return []
+
+
+def _excel_channels_for_user(email, merged_data, selected_channel=None):
+    """Columns to show in download: all assigned channels for multi-channel users."""
+    email = (email or "").lower()
+    assigned = CHANNELS[:] if email in ADMINS else (CHANNEL_MAP.get(email) or [])
+    if len(assigned) > 1:
+        return assigned
+    active = [ch for ch in CHANNELS if isinstance(merged_data, dict) and ch in merged_data and merged_data.get(ch)]
+    if active:
+        return active
+    return [selected_channel] if selected_channel else assigned
 
 def _sub_get(qkey, email):
     k = _sub_key(qkey, email)
@@ -564,7 +593,7 @@ def api_load_drr(qkey):
         "user_channel":  member_ch,
         "user_channels": member_channels,
         "all_channels":  None,
-        "submitted":     sub.get("submitted", False),
+        "submitted":     (member_ch in _submitted_channels(sub, email)) if member_ch else sub.get("submitted", False),
         "submitted_at":  sub.get("submitted_at",""),
         "revision":      sub.get("revision", 0),
         "refill_requested": sub.get("refill_requested", False),
@@ -584,8 +613,6 @@ def api_save_draft(qkey):
     if qkey not in QUARTERS: return jsonify({"error":"Invalid quarter"}), 400
     email = _email()
     sub   = _sub_get(qkey, email)
-    if sub["submitted"]:
-        return jsonify({"error":"Already submitted — cannot save draft"}), 409
 
     # FIX: read entire body once so both rows and channel are available
     body = request.json or {}
@@ -593,6 +620,12 @@ def api_save_draft(qkey):
     member_channels = CHANNELS[:] if _is_admin() else (CHANNEL_MAP.get(email) or [])
     ch_param = body.get("channel") or request.args.get("channel") or None
     member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
+
+    submitted_channels = _submitted_channels(sub, email)
+    if member_ch and member_ch in submitted_channels:
+        return jsonify({"error":"Already submitted — cannot save draft for this channel"}), 409
+    if not member_ch and sub.get("submitted"):
+        return jsonify({"error":"Already submitted — cannot save draft"}), 409
 
     # Build this channel's data from rows
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in QUARTERS[qkey]["months"]} for row in rows}
@@ -616,13 +649,21 @@ def api_submit(qkey):
     email = _email(); name = _name()
     sub   = _sub_get(qkey, email)
 
-    if sub["submitted"]:
-        return jsonify({"error":"Already submitted","submitted_at":sub["submitted_at"]}), 409
-
-    # FIX: read entire body once
+    # Read entire body once
     body_data = request.json or {}
     rows = body_data.get("rows", [])
     if not rows: return jsonify({"error":"No data"}), 400
+
+    # Multi-channel support: each channel is submitted independently.
+    member_channels = CHANNELS[:] if _is_admin() else (CHANNEL_MAP.get(email) or [])
+    ch_param = body_data.get("channel") or request.args.get("channel") or None
+    member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
+
+    submitted_channels = _submitted_channels(sub, email)
+    if member_ch and member_ch in submitted_channels:
+        return jsonify({"error":"Already submitted","submitted_at":sub.get("submitted_at","")}), 409
+    elif not member_ch and sub.get("submitted"):
+        return jsonify({"error":"Already submitted","submitted_at":sub.get("submitted_at","")}), 409
 
     months = QUARTERS[qkey]["months"]
     errors = []
@@ -639,11 +680,6 @@ def api_submit(qkey):
 
     data = {row.get("_row_id",""): {m: row.get(m,"") for m in months} for row in rows}
 
-    # Multi-channel support: each channel stored separately
-    member_channels = CHANNELS[:] if _is_admin() else (CHANNEL_MAP.get(email) or [])
-    ch_param = body_data.get("channel") or request.args.get("channel") or None
-    member_ch = ch_param if (ch_param and ch_param in member_channels) else (member_channels[0] if member_channels else None)
-
     # Merge into channel-keyed store — Channel B submit does NOT erase Channel A
     existing_sub = _sub_get(qkey, email)
     existing_data = _wrap_legacy_data(existing_sub.get("data") or {}, email, existing_sub.get("channel") or member_ch)
@@ -651,7 +687,10 @@ def api_submit(qkey):
         existing_data[member_ch] = data
         merged_data = existing_data
     else:
-        merged_data = data  # admin / no-channel
+        merged_data = data
+
+    if member_ch and member_ch not in submitted_channels:
+        submitted_channels.append(member_ch)
 
     q_master  = _q_get(qkey)
     drr_lookup = {p["_row_id"]: p.get("_drr", {}) for p in (q_master.get("drr_data") or [])}
@@ -667,13 +706,11 @@ def api_submit(qkey):
                 row["_ref"] = row["_refs"].get(member_ch, {})
 
     buf = io.BytesIO()
-    # If the user has forecast data for more than one channel, build an all-channels
-    # Excel so the downloaded file contains the full picture across every channel.
-    active_chs_in_data = [ch for ch in CHANNELS if ch in merged_data and merged_data[ch]]
-    if len(active_chs_in_data) > 1:
+    excel_channels = _excel_channels_for_user(email, merged_data, member_ch)
+    if len(excel_channels) > 1:
         _save_submission_excel_multi_channel(
             merged_data, q_master.get("drr_data") or [],
-            name, qkey, months, buf)
+            name, qkey, months, buf, active_channels=excel_channels)
     else:
         _save_submission_excel(rows, name, qkey, months, buf, member_channel=member_ch)
     buf.seek(0)
@@ -681,7 +718,7 @@ def api_submit(qkey):
 
     now  = datetime.datetime.now()
     at   = now.strftime("%d %b %Y, %H:%M")
-    rev  = sub["revision"] + 1
+    rev  = sub.get("revision", 0) + 1
     fn   = ("Forecast_"+qkey+"_"+datetime.date.today().strftime("%Y_%m_%d")
             +"_"+name.replace(" ","_")+((("_r"+str(rev)) if rev > 1 else ""))+".xlsx")
 
@@ -692,6 +729,7 @@ def api_submit(qkey):
     _sub_set(qkey, email, dict(
         submitted=True, submitted_at=at, submitted_at_dt=now.isoformat(),
         data=merged_data, user_name=name, revision=rev, channel=member_ch,
+        submitted_channels=submitted_channels,
         refill_requested=False, refill_reason="",
         refill_cooldown_until=None,
         excel_bytes=eb, file=fn
@@ -699,7 +737,7 @@ def api_submit(qkey):
 
     try: save_submission_log(name, fn, len(rows), ".")
     except: pass
-    _log("Submission", name, qkey+" Rev "+str(rev)+" — "+str(len(rows))+" rows")
+    _log("Submission", name, qkey+" Rev "+str(rev)+" — "+str(len(rows))+" rows — "+str(member_ch or "All"))
 
     lock_note = ""
     if locked_months:
@@ -710,6 +748,7 @@ def api_submit(qkey):
         subject="Forecast Submitted — "+name+" / "+qkey+" — "+datetime.date.today().strftime("%d %b %Y"),
         body=("Submitted by : "+name+" ("+email+")\n"
               "Quarter      : "+qkey+" — "+QUARTERS[qkey]["label"]+"\n"
+              "Channel      : "+str(member_ch or "All")+"\n"
               "Date & Time  : "+at+"\n"
               "Products     : "+str(len(rows))+"\n"
               "Revision     : "+str(rev)+"\n"
@@ -717,6 +756,7 @@ def api_submit(qkey):
         attach_name=fn, attach_bytes=eb)
 
     return jsonify({"status":"success","submitted_at":at,"filename":fn,"revision":rev,
+                    "channel":member_ch,"submitted_channels":submitted_channels,
                     "allowed_refill_months":allowed_refill_months,
                     "locked_months":locked_months,
                     "can_refill":can_refill})
@@ -725,13 +765,44 @@ def api_submit(qkey):
 @app.route("/api/download-submission/<qkey>")
 @_require_login
 def api_download_submission(qkey):
-    email = _email()
+    email = _email(); name = _name()
     sub   = _sub_get(qkey, email)
-    if not sub.get("submitted"): return jsonify({"error":"No submission"}), 404
-    eb = sub.get("excel_bytes")
-    if not eb: return jsonify({"error":"File unavailable"}), 404
-    buf = io.BytesIO(eb); buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name=sub.get("file","submission.xlsx"),
+    if not sub.get("submitted") and not _submitted_channels(sub, email):
+        return jsonify({"error":"No submission"}), 404
+
+    q_master = _q_get(qkey)
+    if qkey not in QUARTERS or not q_master.get("initiated"):
+        return jsonify({"error":"Quarter not initiated"}), 404
+
+    months = QUARTERS[qkey]["months"]
+    raw_data = sub.get("data") or {}
+    merged_data = _wrap_legacy_data(raw_data, email, sub.get("channel"))
+
+    buf = io.BytesIO()
+    excel_channels = _excel_channels_for_user(email, merged_data, sub.get("channel"))
+    if len(excel_channels) > 1:
+        _save_submission_excel_multi_channel(
+            merged_data, q_master.get("drr_data") or [],
+            sub.get("user_name") or name, qkey, months, buf, active_channels=excel_channels)
+    else:
+        # Build rows for legacy / single-channel export
+        only_ch = excel_channels[0] if excel_channels else sub.get("channel")
+        saved = merged_data.get(only_ch, {}) if only_ch and _is_channel_keyed(merged_data) else merged_data
+        rows = []
+        for prod in q_master.get("drr_data") or []:
+            r = dict(prod)
+            drr_all = r.pop("_drr", {})
+            row_saved = saved.get(r.get("_row_id", ""), {}) if isinstance(saved, dict) else {}
+            for m in months:
+                r[m] = row_saved.get(m, "")
+            if only_ch:
+                r["_ref"] = {dl: round(drr_all.get(only_ch, {}).get(dl, 0), 2) for dl in DRR_LABELS}
+            rows.append(r)
+        _save_submission_excel(rows, sub.get("user_name") or name, qkey, months, buf, member_channel=only_ch)
+
+    buf.seek(0)
+    fn = sub.get("file") or ("Forecast_"+qkey+"_"+datetime.date.today().strftime("%Y_%m_%d")+"_"+(sub.get("user_name") or name).replace(" ","_")+".xlsx")
+    return send_file(buf, as_attachment=True, download_name=fn,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ── API: Refill request ────────────────────────────────────────────────────────
@@ -982,8 +1053,7 @@ def api_upload_excel_fill(qkey):
     is_adm = _is_admin()
     sub    = _sub_get(qkey, email)
 
-    if sub.get("submitted"):
-        return jsonify({"error": "Already submitted — cannot upload."}), 409
+    # Channel-specific submitted guard is applied after channel is resolved.
 
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded."}), 400
@@ -1009,6 +1079,12 @@ def api_upload_excel_fill(qkey):
             }), 400
         ch_param_up = request.args.get("channel") or None
         member_ch = ch_param_up if ch_param_up in member_channels_upload else member_channels_upload[0]
+
+    submitted_channels = _submitted_channels(sub, email)
+    if member_ch and member_ch in submitted_channels:
+        return jsonify({"error": "Already submitted — cannot upload for this channel."}), 409
+    if not member_ch and sub.get("submitted"):
+        return jsonify({"error": "Already submitted — cannot upload."}), 409
 
     try:
         import openpyxl
@@ -1521,7 +1597,7 @@ def _save_submission_excel(rows, username, qkey, months, dest, member_channel=No
     wb.save(dest)
 
 
-def _save_submission_excel_multi_channel(merged_data, drr_data, username, qkey, months, dest):
+def _save_submission_excel_multi_channel(merged_data, drr_data, username, qkey, months, dest, active_channels=None):
     """
     Build a submission Excel that shows ALL channels the user has submitted.
     merged_data : { channel_name -> { row_id -> { month -> value } } }
@@ -1559,10 +1635,12 @@ def _save_submission_excel_multi_channel(merged_data, drr_data, username, qkey, 
     ws = wb.active
     ws.title = "Forecast Submission"
 
-    # Only include channels that have actual data in merged_data
-    active_channels = [ch for ch in CHANNELS if ch in merged_data and merged_data[ch]]
-    if not active_channels:
-        active_channels = list(merged_data.keys())
+    # Include requested channels, even if one has no saved data yet.
+    if active_channels is None:
+        active_channels = [ch for ch in CHANNELS if isinstance(merged_data, dict) and ch in merged_data and merged_data[ch]]
+        if not active_channels and isinstance(merged_data, dict):
+            active_channels = list(merged_data.keys())
+    active_channels = [ch for ch in active_channels if ch]
 
     # Column layout: BASE_COLS_DRR + (months × channel) for each active channel
     n_base   = len(BASE_COLS_DRR)
@@ -1616,7 +1694,7 @@ def _save_submission_excel_multi_channel(merged_data, drr_data, username, qkey, 
         _, sub_bg, _ = CHANNEL_PALETTES[ci % len(CHANNEL_PALETTES)]
         hdr_bg, _, _ = CHANNEL_PALETTES[ci % len(CHANNEL_PALETTES)]
         for m in months:
-            cell = ws.cell(row=3, column=col_offset, value=m)
+            cell = ws.cell(row=3, column=col_offset, value=f"{ch} {m}")
             cell.font      = Font(bold=True, color=C_WHITE, name="Calibri", size=9)
             cell.fill      = PatternFill(start_color=hdr_bg, end_color=hdr_bg, fill_type="solid")
             cell.alignment = Alignment(horizontal="center", vertical="center")
