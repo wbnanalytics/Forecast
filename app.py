@@ -864,7 +864,8 @@ def admin_panel():
     for qkey, qmeta in QUARTERS.items():
         q    = _q_get(qkey)
         subs = _all_subs_for_quarter(qkey) if q.get("initiated") else {}
-        all_members = list(set(ADMINS + FORECAST_MEMBERS))
+        # Include all members from FORECAST_MEMBERS + anyone assigned in CHANNEL_MAP
+        all_members = list(set(FORECAST_MEMBERS + list(CHANNEL_MAP.keys())))
         submitted_count  = sum(1 for s in subs.values() if s.get("submitted"))
         pending_refills  = sum(1 for s in subs.values() if s.get("refill_requested"))
         member_rows = []
@@ -874,6 +875,12 @@ def admin_panel():
             cooldown, cmsg = _cooldown_active(s, qkey)
             am = _refill_allowed_months(qkey)
             lm = _locked_months_in_quarter(qkey)
+            assigned_channels = CHANNEL_MAP.get(m_email) or []
+            sub_channels = _submitted_channels(s, m_email)
+            channel_status = [
+                {"channel": ch, "submitted": ch in sub_channels}
+                for ch in assigned_channels
+            ]
             member_rows.append({
                 "email":        m_email,
                 "user_name":    s.get("user_name", m_email.split("@")[0]),
@@ -887,6 +894,8 @@ def admin_panel():
                 "allowed_refill_months": am,
                 "locked_months":         lm,
                 "can_refill":            len(am) > 0 and s.get("submitted", False),
+                "assigned_channels":     assigned_channels,
+                "channel_status":        channel_status,
             })
         q_info[qkey] = {
             "label":           qmeta["label"],

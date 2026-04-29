@@ -198,6 +198,7 @@ table.dt tbody tr:hover{background:var(--g50)}
           <thead>
             <tr>
               <th>Member</th>
+              <th>Channels</th>
               <th>Status</th>
               <th>Submitted At</th>
               <th>Revision</th>
@@ -212,6 +213,18 @@ table.dt tbody tr:hover{background:var(--g50)}
               <td>
                 <div style="font-weight:600;font-size:13px">{{ m.user_name }}</div>
                 <div style="font-size:11px;color:var(--t3)">{{ m.email }}</div>
+              </td>
+              <td>
+                {% if m.channel_status %}
+                  {% for cs in m.channel_status %}
+                    <span style="display:inline-flex;align-items:center;gap:4px;margin:2px 3px 2px 0;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;background:{% if cs.submitted %}#D1FAE5{% else %}#FEF3C7{% endif %};color:{% if cs.submitted %}#065F46{% else %}#92400E{% endif %}">
+                      <span style="width:6px;height:6px;border-radius:50%;background:{% if cs.submitted %}#10B981{% else %}#F59E0B{% endif %};flex-shrink:0;display:inline-block"></span>
+                      {{ cs.channel }}
+                    </span>
+                  {% endfor %}
+                {% else %}
+                  <span style="font-size:11px;color:var(--t3)">—</span>
+                {% endif %}
               </td>
               <td>
                 {% if m.submitted %}
@@ -257,7 +270,7 @@ table.dt tbody tr:hover{background:var(--g50)}
             </tr>
             {% endfor %}
           {% else %}
-          <tr><td colspan="6" class="empty-td">No members have logged in yet.</td></tr>
+          <tr><td colspan="7" class="empty-td">No members have logged in yet.</td></tr>
           {% endif %}
           </tbody>
         </table>
