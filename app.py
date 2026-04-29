@@ -537,6 +537,7 @@ def api_load_drr(qkey):
     if qkey not in QUARTERS: return jsonify({"error":"Invalid quarter"}), 400
     q = _q_get(qkey)
     if not q.get("initiated"): return jsonify({"error":"Quarter not yet initiated by admin"}), 404
+    if q.get("is_closed"): return jsonify({"error":"Forecast window is closed for this quarter"}), 403
 
     email    = _email(); is_adm = _is_admin()
     drr_data = q.get("drr_data") or []
@@ -870,7 +871,7 @@ def admin_panel():
         pending_refills  = sum(1 for s in subs.values() if s.get("refill_requested"))
         member_rows = []
         for m_email in sorted(all_members):
-            if m_email in ADMINS: continue
+            if m_email in ADMINS and m_email not in subs: continue
             s = subs.get(m_email, _sub_default())
             cooldown, cmsg = _cooldown_active(s, qkey)
             am = _refill_allowed_months(qkey)
@@ -901,6 +902,8 @@ def admin_panel():
             "label":           qmeta["label"],
             "initiated":       q.get("initiated", False),
             "initiated_at":    q.get("initiated_at",""),
+            "is_closed":       q.get("is_closed", False),
+            "closed_at":       q.get("closed_at",""),
             "sku_count":       len(q.get("drr_data") or []),
             "submitted_count": submitted_count,
             "pending_refills": pending_refills,
@@ -955,6 +958,7 @@ def admin_approve_refill():
         "refill_requested":False,
         "refill_reason":   "",
         "refill_cooldown_until": None,
+        "submitted_channels":   [],
     })
     _log("Refill Approved", _name(), qkey+" for "+email)
     return jsonify({"status":"approved"})
@@ -977,10 +981,42 @@ def admin_force_unlock():
     email = data.get("email","").lower().strip()
     _sub_set(qkey, email, {
         "submitted":False, "refill_requested":False,
-        "refill_cooldown_until":None,
+        "refill_cooldown_until":None, "submitted_channels":[],
     })
     _log("Force Unlock", _name(), qkey+" for "+email)
     return jsonify({"status":"unlocked"})
+
+@app.route("/admin/api/close-quarter", methods=["POST"])
+@_require_admin
+def admin_close_quarter():
+    data = request.json or {}
+    qkey = data.get("quarter","")
+    if qkey not in QUARTERS:
+        return jsonify({"error":"Invalid quarter"}), 400
+    q = _q_get(qkey)
+    if not q.get("initiated"):
+        return jsonify({"error":"Quarter not initiated"}), 400
+    if q.get("is_closed"):
+        return jsonify({"error":"Quarter already closed"}), 400
+    q["is_closed"] = True
+    q["closed_at"] = datetime.date.today().strftime("%d %b %Y")
+    _q_set(qkey, q)
+    _log("Quarter Closed", _name(), qkey)
+    return jsonify({"status":"closed","closed_at":q["closed_at"]})
+
+@app.route("/admin/api/reopen-quarter", methods=["POST"])
+@_require_admin
+def admin_reopen_quarter():
+    data = request.json or {}
+    qkey = data.get("quarter","")
+    if qkey not in QUARTERS:
+        return jsonify({"error":"Invalid quarter"}), 400
+    q = _q_get(qkey)
+    q["is_closed"] = False
+    q["closed_at"] = ""
+    _q_set(qkey, q)
+    _log("Quarter Reopened", _name(), qkey)
+    return jsonify({"status":"reopened"})
 
 @app.route("/admin/api/export-quarter/<qkey>")
 @_require_admin

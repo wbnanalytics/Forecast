@@ -159,11 +159,14 @@ table.dt tbody tr:hover{background:var(--g50)}
     <div class="q-accordion" id="qacc-{{ qkey }}">
       <div class="q-head" onclick="toggleQ('{{ qkey }}')">
         <div class="q-head-left">
-          <span class="dot {% if qi.initiated %}dg{% else %}dr{% endif %}"></span>
+          <span class="dot {% if not qi.initiated %}dr{% elif qi.is_closed %}dy{% else %}dg{% endif %}"></span>
           <span class="q-label">{{ qi.label }}</span>
           {% if qi.initiated %}
           <span class="q-meta">{{ qi.sku_count }} SKUs &middot; initiated {{ qi.initiated_at }}</span>
           <span class="badge bg">{{ qi.submitted_count }}/{{ qi.total_members }} submitted</span>
+          {% if qi.is_closed %}
+          <span class="badge by" style="background:#FEF3C7;color:#92400E">&#x1F512; Closed {{ qi.closed_at }}</span>
+          {% endif %}
           {% if qi.pending_refills > 0 %}
           <span class="badge by">{{ qi.pending_refills }} refill request{{ 's' if qi.pending_refills > 1 }}</span>
           {% endif %}
@@ -174,6 +177,11 @@ table.dt tbody tr:hover{background:var(--g50)}
         <div class="q-head-right">
           {% if qi.initiated %}
           <a href="/admin/api/export-quarter/{{ qkey }}" class="btn bo">Export All</a>
+          {% if qi.is_closed %}
+          <button class="btn bp" onclick="reopenQ('{{ qkey }}',event)">Reopen</button>
+          {% else %}
+          <button class="btn bw" onclick="closeQ('{{ qkey }}',event)" title="Closes the forecast window — members can no longer submit">Close Window</button>
+          {% endif %}
           <button class="btn bd" onclick="revokeQ('{{ qkey }}',event)">Revoke</button>
           {% endif %}
           <span style="font-size:12px;color:var(--t3)">▾</span>
@@ -473,6 +481,20 @@ async function denyRefill(qkey,email,btn){
   else toast(j.error||'Failed.','e');
 }
 
+async function closeQ(qkey,event){
+  event.stopPropagation();
+  if(!confirm("Close the forecast window for "+qkey+"?\nMembers will no longer be able to submit or edit until you reopen it.")) return;
+  const j=await post('/admin/api/close-quarter',{quarter:qkey});
+  if(j.status==='closed'){ location.reload(); }
+  else alert(j.error||'Error');
+}
+async function reopenQ(qkey,event){
+  event.stopPropagation();
+  if(!confirm("Reopen the forecast window for "+qkey+"?")) return;
+  const j=await post('/admin/api/reopen-quarter',{quarter:qkey});
+  if(j.status==='reopened'){ location.reload(); }
+  else alert(j.error||'Error');
+}
 async function forceUnlock(qkey,email,btn){
   if(!confirm('Force unlock '+email+' for '+qkey+'? This clears their submission and cooldown.')) return;
   const j=await post('/admin/api/force-unlock',{quarter:qkey,email});
